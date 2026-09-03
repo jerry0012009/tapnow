@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "TapNow Companion",
+  "version": "0.1.0",
+  "description": "A local pre-run review assistant for TapNow Canvas.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://app.tapnow.ai/*"
+  ],
+  "action": {
+    "default_title": "TapNow Companion",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://app.tapnow.ai/canvas/*"
+      ],
+      "js": [
+        "reviewer.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -20,6 +20,10 @@
 完整导出样例见
 [examples/canvas-export-TEST-0903](examples/canvas-export-TEST-0903/README.md)。
 
+个人试用的最小 Chrome 副驾驶扩展见
+[extension](extension/README.md)：它只做本地运行前审核，不读取 Token，
+不上传提示词，不调用 TapNow 私有 API。
+
 ## 环境
 
 - Node.js 20+

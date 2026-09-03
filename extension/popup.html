@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TapNow Companion</title>
+    <style>
+      :root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; }
+      body { width: 300px; margin: 0; padding: 16px; color: #0f172a; background: #f8fafc; }
+      h1 { margin: 0 0 4px; font-size: 17px; }
+      p { margin: 0 0 14px; color: #64748b; font-size: 12px; line-height: 1.4; }
+      label { display: block; margin: 12px 0 6px; font-size: 12px; font-weight: 700; color: #475569; }
+      input[type="text"], textarea { box-sizing: border-box; width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; font: 13px/1.4 system-ui, sans-serif; }
+      textarea { min-height: 58px; resize: vertical; }
+      .row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+      .row label { margin: 0; font-weight: 600; color: #0f172a; }
+      button { width: 100%; margin-top: 14px; min-height: 36px; border: 0; border-radius: 6px; background: #2563eb; color: white; font: 600 13px system-ui, sans-serif; cursor: pointer; }
+      #status { min-height: 18px; margin-top: 8px; color: #15803d; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>TapNow Companion 0.1</h1>
+    <p>本地运行前审核，不上传提示词，不读取登录 Token。</p>
+    <div class="row">
+      <input id="enabled" type="checkbox">
+      <label for="enabled">启用副驾驶</label>
+    </div>
+    <div class="row">
+      <input id="gateClicks" type="checkbox">
+      <label for="gateClicks">拦截运行/生成按钮</label>
+    </div>
+    <label for="requiredTerms">团队要求词（逗号或换行分隔）</label>
+    <textarea id="requiredTerms" placeholder="例如：品牌色, 电影感"></textarea>
+    <label for="forbiddenTerms">团队禁用词（逗号或换行分隔）</label>
+    <textarea id="forbiddenTerms" placeholder="例如：低俗, 未授权品牌"></textarea>
+    <button id="save" type="button">保存设置</button>
+    <div id="status" role="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>
