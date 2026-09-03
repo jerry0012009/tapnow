@@ -3,7 +3,7 @@ import { defineConfig } from "wxt";
 export default defineConfig({
   manifest: {
     name: "TapNow Companion",
-    version: "0.1.1",
+    version: "0.1.2",
     description: "A lightweight pre-run review assistant for TapNow Canvas.",
     permissions: ["storage"],
     host_permissions: [

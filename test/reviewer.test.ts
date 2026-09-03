@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { reviewDraft } from "../utils/reviewer";
+import { inferPromptFromNodeText, reviewDraft } from "../utils/reviewer";
+
+test("recovers prompt text rendered by a non-editing Text node", () => {
+  const rendered =
+    "TextPin双击开始编辑... To pick up a draggable item, press the space bar. While dragging, use the arrow keys to move the item. Press space again to drop the item in its new position, or press escape to cancel. 让两个furry 男孩 暧昧的交互请帮我写提示词Gemini 3.1 Flash Lite1×1";
+  assert.equal(
+    inferPromptFromNodeText(rendered),
+    "让两个furry 男孩 暧昧的交互请帮我写提示词"
+  );
+});
 
 test("blocks an empty prompt", () => {
   const result = reviewDraft({ prompt: "" });

@@ -44,6 +44,25 @@ export interface ReviewSettings {
   llmBaseUrl: string;
 }
 
+const DRAG_HELP_TEXT =
+  "To pick up a draggable item, press the space bar. While dragging, use the arrow keys to move the item. Press space again to drop the item in its new position, or press escape to cancel.";
+
+export function inferPromptFromNodeText(value: unknown): string {
+  let text = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  text = text.replace(DRAG_HELP_TEXT, " ");
+  text = text.replace(/双击开始编辑(?:\.\.\.|…)?/g, " ");
+  text = text.replace(/Double-click to edit(?:\.\.\.|…)?/gi, " ");
+  text = text.replace(/^(?:Text|Image|Video|Audio)\s*Pin\b/i, " ");
+  text = text.replace(
+    /(?:Gemini|GPT|Claude|Flux|Midjourney|DALL[·\s-]?E|Stable Diffusion)\b.*?\d+\s*[×x]\s*\d+\s*$/i,
+    " "
+  );
+  text = text.replace(/\s+\d+\s*[×x]\s*\d+\s*$/i, " ");
+  return text.replace(/\s+/g, " ").trim();
+}
+
 export const DEFAULT_SETTINGS: ReviewSettings = {
   enabled: true,
   requiredTerms: [],

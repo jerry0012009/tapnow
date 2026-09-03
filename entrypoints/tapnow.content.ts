@@ -3,6 +3,7 @@ import {
   DEFAULT_SETTINGS,
   normalizeSettings,
   reviewDraft,
+  inferPromptFromNodeText,
   type LocalReview,
   type ReviewDraft,
   type ReviewSettings
@@ -138,6 +139,15 @@ export default defineContentScript({
         state.activeNode = nodeFor(target);
       }
 
+      function nodeTextOf(element: Element | null): string {
+        if (!element) return "";
+        const clone = element.cloneNode(true) as Element;
+        clone
+          .querySelectorAll("button, [role=button], script, style")
+          .forEach((control) => control.remove());
+        return inferPromptFromNodeText(textOf(clone));
+      }
+
       function getNodeId(element: Element | null): string | null {
         let current = element;
         for (
@@ -217,7 +227,8 @@ export default defineContentScript({
             : field
               ? nodeFor(field)
               : null;
-        const prompt = textOf(field);
+        const nodeText = nodeTextOf(nodeElement);
+        const prompt = textOf(field) || nodeText;
         const textMaterials = nodeElement
           ? [...nodeElement.querySelectorAll(
               "textarea, input:not([type=hidden]), [contenteditable=true]"
@@ -261,7 +272,7 @@ export default defineContentScript({
             ""
           ).toLowerCase() || null,
           prompt,
-          upstreamSummary: textOf(nodeElement).slice(0, 1200),
+          upstreamSummary: nodeText.slice(0, 1200),
           textMaterials,
           imageMaterials,
           fieldCount: textMaterials.length,
@@ -304,8 +315,15 @@ export default defineContentScript({
           : llmError
             ? `<div class="llm"><div class="label">LLM 审阅</div><div class="issue"><strong>调用失败</strong><span>${escapeHtml(llmError)}</span></div></div>`
             : "";
+        const imageCount = draft.imageMaterials?.length || 0;
         const uploadable =
           draft.imageMaterials?.filter((image) => image.dataUrl).length || 0;
+        const materialSummary = state.settings.llmIncludeImages
+          ? `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 已准备发送图片 ${uploadable} 项`
+          : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 图片发送未开启`;
+        const imageNotice = state.settings.llmIncludeImages
+          ? "点击“检测”才会调用 LLM；检测时会发送已准备的图片素材。"
+          : "点击“检测”才会调用 LLM；当前未开启图片发送，只传图片元数据。";
 
         body.innerHTML = `
           <div class="meta">画布：${escapeHtml(draft.canvasId || "未识别")}<br>节点：${escapeHtml(draft.nodeId || "未识别")}<br>来源：${escapeHtml(draft.source || "页面")}</div>
@@ -314,12 +332,12 @@ export default defineContentScript({
           <div class="label">节点上下文</div>
           <div class="context">${escapeHtml(draft.upstreamSummary || "未检测到可见上下文")}</div>
           <div class="label">素材</div>
-          <div class="materials">文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${draft.imageMaterials?.length || 0} 项 · 可上传图片 ${uploadable} 项</div>
+          <div class="materials">${materialSummary}</div>
           <div class="label">检查结果</div>
           ${issueHtml}
           ${llmHtml}
           ${suggestionsHtml}
-          <div class="notice">点击“检测”才会调用 LLM；未开启图片发送时只传图片元数据。</div>
+          <div class="notice">${imageNotice}</div>
         `;
       }
 
