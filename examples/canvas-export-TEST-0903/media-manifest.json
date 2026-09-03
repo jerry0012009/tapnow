@@ -1,0 +1,18 @@
+[
+  {
+    "url": "https://files.tapnow.media/api/conversation/storage/uploads/0e46269b-51cc-4370-874a-bd42a40050ee?tap_mx=0",
+    "status": 200,
+    "downloaded": true,
+    "file": "001-e2f1fe79ff769f33.jpg",
+    "bytes": 625057,
+    "contentType": "image/jpeg"
+  },
+  {
+    "url": "https://files.tapnow.media/api/conversation/storage/uploads/ec8d2f4b-80b9-4c22-8199-dabeb0cc3db9?tap_mx=1",
+    "status": 200,
+    "downloaded": true,
+    "file": "002-b693d0d78541335c.jpg",
+    "bytes": 552605,
+    "contentType": "image/jpeg"
+  }
+]

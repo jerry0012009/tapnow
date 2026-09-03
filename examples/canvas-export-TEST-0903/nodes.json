@@ -1,0 +1,255 @@
+{
+  "code": 0,
+  "data": {
+    "nodes": [
+      {
+        "id": "text-eaa81176-ee7b-425d-92bd-0204d84640f9",
+        "canvas_id": "350073d9-2b5a-4a79-b057-4f9e644c75d4",
+        "type": "text",
+        "position": {
+          "x": 1206.18,
+          "y": 551.67
+        },
+        "measured": {
+          "height": 250,
+          "width": 250
+        },
+        "dimensions": null,
+        "data": {
+          "params": {
+            "model": "gemini-3.1-flash-lite",
+            "provider": "google"
+          },
+          "prompt": "",
+          "taskInfo": {
+            "status": "completed"
+          },
+          "text": "This image portrays an anthropomorphic character with white fur and feline features sitting in a grassy meadow. The character, which has prominent pointed ears and a fluffy tail, is wearing a light blue hooded sweatshirt and is focused on reading a small, dark-bound book held in its hands. The setting is bright and sunlit, with the character depicted in a soft, illustrative art style.",
+          "title": "Text",
+          "type": "generate"
+        },
+        "selected": false,
+        "extent": "",
+        "parent_id": "",
+        "source_position": "",
+        "target_position": "",
+        "created_by_role": "user",
+        "created_by": "a819e392-f09c-4837-b45d-d4ea6054fa7c",
+        "created_at": "2026-09-03T11:28:46.456Z",
+        "updated_at": "2026-09-03T17:09:11.386Z",
+        "short_id": "n5",
+        "session_id": ""
+      },
+      {
+        "id": "text-b1c46ce2-abd9-4986-961c-7e2592ea3944",
+        "canvas_id": "350073d9-2b5a-4a79-b057-4f9e644c75d4",
+        "type": "text",
+        "position": {
+          "x": 500.41,
+          "y": 273.6
+        },
+        "measured": {
+          "height": 250,
+          "width": 250
+        },
+        "dimensions": null,
+        "data": {
+          "params": {
+            "model": "gemini-3.1-flash-lite",
+            "provider": "google"
+          },
+          "prompt": "一个furry男孩",
+          "taskInfo": {
+            "status": "completed"
+          },
+          "text": "这是一个有着如雪般洁白皮毛的兽人男孩，他拥有一对修长且尖尖的狐狸耳朵，内部透着淡淡的粉色。他的眼睛是澄澈的琥珀色，看起来既好奇又温顺。他穿着一件略显宽大的浅蓝色连帽衫，露出了毛茸茸的尾巴，尾巴尖端染着一抹亮眼的银色。他正坐在草地上，手里捧着一本书，身后的尾巴因为心情愉快而在身后轻轻扫动。",
+          "title": "Text",
+          "type": "generate"
+        },
+        "selected": false,
+        "extent": "",
+        "parent_id": "",
+        "source_position": "",
+        "target_position": "",
+        "created_by_role": "user",
+        "created_by": "a819e392-f09c-4837-b45d-d4ea6054fa7c",
+        "created_at": "2026-09-03T11:22:08.496Z",
+        "updated_at": "2026-09-03T17:09:12.065Z",
+        "short_id": "n1",
+        "session_id": ""
+      },
+      {
+        "id": "image-3512ed6d-7c20-465a-8216-10a087ddb3bb",
+        "canvas_id": "350073d9-2b5a-4a79-b057-4f9e644c75d4",
+        "type": "image",
+        "position": {
+          "x": 1548.06,
+          "y": 250.39
+        },
+        "measured": {
+          "height": 250,
+          "width": 250
+        },
+        "dimensions": null,
+        "data": {
+          "__metadata": {
+            "height": 2560,
+            "url": "https://files.tapnow.media/api/conversation/storage/uploads/0e46269b-51cc-4370-874a-bd42a40050ee?tap_mx=0",
+            "width": 2560
+          },
+          "currentSourceFileId": "0e46269b-51cc-4370-874a-bd42a40050ee",
+          "defaultOpenGallery": false,
+          "historyLocalQueueMetadata": [],
+          "historyLocalQueueResourceMetadata": [],
+          "historyLocalQueues": [],
+          "historyVariantCount": 1,
+          "historyVariantsHidden": false,
+          "options": [
+            "https://files.tapnow.media/api/conversation/storage/uploads/0e46269b-51cc-4370-874a-bd42a40050ee?tap_mx=0"
+          ],
+          "params": {
+            "aspectRatio": "1:1",
+            "imageSize": "2K",
+            "model": "doubao-seedream-5.0-lite",
+            "provider": "bytedance",
+            "times": 1
+          },
+          "prompt": "",
+          "src": "https://files.tapnow.media/api/conversation/storage/uploads/0e46269b-51cc-4370-874a-bd42a40050ee?tap_mx=0",
+          "taskInfo": {
+            "status": "completed"
+          },
+          "title": "图片生成",
+          "type": "generate"
+        },
+        "selected": false,
+        "extent": "",
+        "parent_id": "",
+        "source_position": "",
+        "target_position": "",
+        "created_by_role": "user",
+        "created_by": "a819e392-f09c-4837-b45d-d4ea6054fa7c",
+        "created_at": "2026-09-03T11:28:22.221Z",
+        "updated_at": "2026-09-03T11:31:32.244Z",
+        "short_id": "n3",
+        "session_id": ""
+      },
+      {
+        "id": "image-238c3de2-d090-410f-8253-5defd2d55dba",
+        "canvas_id": "350073d9-2b5a-4a79-b057-4f9e644c75d4",
+        "type": "image",
+        "position": {
+          "x": 878.69,
+          "y": 199.03
+        },
+        "measured": {
+          "height": 250,
+          "width": 250
+        },
+        "dimensions": null,
+        "data": {
+          "__metadata": {
+            "height": 480,
+            "url": "https://files.tapnow.media/api/conversation/storage/uploads/ec8d2f4b-80b9-4c22-8199-dabeb0cc3db9?tap_mx=1",
+            "width": 480
+          },
+          "currentSourceFileId": "ec8d2f4b-80b9-4c22-8199-dabeb0cc3db9",
+          "defaultOpenGallery": false,
+          "historyLocalQueueMetadata": [],
+          "historyLocalQueueResourceMetadata": [],
+          "historyLocalQueues": [],
+          "historyVariantCount": 1,
+          "historyVariantsHidden": false,
+          "options": [
+            "https://files.tapnow.media/api/conversation/storage/uploads/ec8d2f4b-80b9-4c22-8199-dabeb0cc3db9?tap_mx=1"
+          ],
+          "params": {
+            "aspectRatio": "1:1",
+            "imageSize": "2K",
+            "model": "doubao-seedream-5.0-lite",
+            "provider": "bytedance",
+            "times": 1
+          },
+          "prompt": "",
+          "src": "https://files.tapnow.media/api/conversation/storage/uploads/ec8d2f4b-80b9-4c22-8199-dabeb0cc3db9?tap_mx=1",
+          "taskInfo": {
+            "status": "completed"
+          },
+          "title": "Image",
+          "type": "generate"
+        },
+        "selected": false,
+        "extent": "",
+        "parent_id": "",
+        "source_position": "",
+        "target_position": "",
+        "created_by_role": "user",
+        "created_by": "a819e392-f09c-4837-b45d-d4ea6054fa7c",
+        "created_at": "2026-09-03T11:23:32.008Z",
+        "updated_at": "2026-09-03T11:31:41.279Z",
+        "short_id": "n2",
+        "session_id": ""
+      }
+    ],
+    "next_cursor": "",
+    "has_more": false,
+    "relations": {
+      "image-238c3de2-d090-410f-8253-5defd2d55dba": {
+        "incoming": [
+          {
+            "node_id": "text-b1c46ce2-abd9-4986-961c-7e2592ea3944",
+            "short_id": "n1"
+          }
+        ],
+        "outgoing": [
+          {
+            "node_id": "text-eaa81176-ee7b-425d-92bd-0204d84640f9",
+            "short_id": "n5"
+          },
+          {
+            "node_id": "image-3512ed6d-7c20-465a-8216-10a087ddb3bb",
+            "short_id": "n3"
+          }
+        ]
+      },
+      "image-3512ed6d-7c20-465a-8216-10a087ddb3bb": {
+        "incoming": [
+          {
+            "node_id": "image-238c3de2-d090-410f-8253-5defd2d55dba",
+            "short_id": "n2"
+          },
+          {
+            "node_id": "text-eaa81176-ee7b-425d-92bd-0204d84640f9",
+            "short_id": "n5"
+          }
+        ],
+        "outgoing": []
+      },
+      "text-b1c46ce2-abd9-4986-961c-7e2592ea3944": {
+        "incoming": [],
+        "outgoing": [
+          {
+            "node_id": "image-238c3de2-d090-410f-8253-5defd2d55dba",
+            "short_id": "n2"
+          }
+        ]
+      },
+      "text-eaa81176-ee7b-425d-92bd-0204d84640f9": {
+        "incoming": [
+          {
+            "node_id": "image-238c3de2-d090-410f-8253-5defd2d55dba",
+            "short_id": "n2"
+          }
+        ],
+        "outgoing": [
+          {
+            "node_id": "image-3512ed6d-7c20-465a-8216-10a087ddb3bb",
+            "short_id": "n3"
+          }
+        ]
+      }
+    }
+  },
+  "message": "success",
+  "request_id": "cffb6916-834f-4cc5-b023-cb555e4d1ed2"
+}

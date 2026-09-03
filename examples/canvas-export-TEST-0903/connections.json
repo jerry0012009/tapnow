@@ -1,0 +1,89 @@
+{
+  "code": 0,
+  "data": {
+    "connections": [
+      {
+        "id": "f8010338-5670-4fe4-8dbb-625e0c986ae9",
+        "canvas_id": "350073d9-2b5a-4a79-b057-4f9e644c75d4",
+        "type": "default",
+        "source": "image-238c3de2-d090-410f-8253-5defd2d55dba",
+        "target": "text-eaa81176-ee7b-425d-92bd-0204d84640f9",
+        "label": "",
+        "data": null,
+        "style": null,
+        "selected": false,
+        "deletable": true,
+        "selectable": true,
+        "source_handle": "",
+        "target_handle": "",
+        "created_by_role": "user",
+        "created_by": "a819e392-f09c-4837-b45d-d4ea6054fa7c",
+        "created_at": "2026-09-03T11:28:47.041Z",
+        "updated_at": "2026-09-03T11:29:27.869Z"
+      },
+      {
+        "id": "3f50321b-2042-45c4-84de-02bf2b19ac12",
+        "canvas_id": "350073d9-2b5a-4a79-b057-4f9e644c75d4",
+        "type": "default",
+        "source": "image-238c3de2-d090-410f-8253-5defd2d55dba",
+        "target": "image-3512ed6d-7c20-465a-8216-10a087ddb3bb",
+        "label": "",
+        "data": null,
+        "style": null,
+        "selected": false,
+        "deletable": true,
+        "selectable": true,
+        "source_handle": "",
+        "target_handle": "",
+        "created_by_role": "user",
+        "created_by": "a819e392-f09c-4837-b45d-d4ea6054fa7c",
+        "created_at": "2026-09-03T11:28:23.072Z",
+        "updated_at": "2026-09-03T11:31:02.554Z"
+      },
+      {
+        "id": "3890b725-54ab-4a25-9eb2-2d7a90a23ddf",
+        "canvas_id": "350073d9-2b5a-4a79-b057-4f9e644c75d4",
+        "type": "default",
+        "source": "text-eaa81176-ee7b-425d-92bd-0204d84640f9",
+        "target": "image-3512ed6d-7c20-465a-8216-10a087ddb3bb",
+        "label": "",
+        "data": {
+          "order": 1073741825
+        },
+        "style": null,
+        "selected": false,
+        "deletable": true,
+        "selectable": true,
+        "source_handle": "right",
+        "target_handle": "left",
+        "created_by_role": "user",
+        "created_by": "a819e392-f09c-4837-b45d-d4ea6054fa7c",
+        "created_at": "2026-09-03T11:30:06.306Z",
+        "updated_at": "2026-09-03T11:31:02.554Z"
+      },
+      {
+        "id": "0ce2b346-c151-4a74-971c-235f1517aa02",
+        "canvas_id": "350073d9-2b5a-4a79-b057-4f9e644c75d4",
+        "type": "default",
+        "source": "text-b1c46ce2-abd9-4986-961c-7e2592ea3944",
+        "target": "image-238c3de2-d090-410f-8253-5defd2d55dba",
+        "label": "",
+        "data": null,
+        "style": null,
+        "selected": false,
+        "deletable": true,
+        "selectable": true,
+        "source_handle": "",
+        "target_handle": "",
+        "created_by_role": "user",
+        "created_by": "a819e392-f09c-4837-b45d-d4ea6054fa7c",
+        "created_at": "2026-09-03T11:23:32.586Z",
+        "updated_at": "2026-09-03T11:24:32.132Z"
+      }
+    ],
+    "next_cursor": "",
+    "has_more": false
+  },
+  "message": "success",
+  "request_id": "1f74008c-1ae6-469f-b1db-6e3f3fa6d14c"
+}

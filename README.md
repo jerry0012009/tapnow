@@ -17,6 +17,9 @@
 
 完整测试过程与证据见 [REPORT.md](REPORT.md)。
 
+完整导出样例见
+[examples/canvas-export-TEST-0903](examples/canvas-export-TEST-0903/README.md)。
+
 ## 环境
 
 - Node.js 20+
