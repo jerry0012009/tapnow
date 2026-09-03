@@ -14,6 +14,14 @@ export interface ReviewDraft {
   nodeType?: string | null;
   prompt?: string;
   upstreamSummary?: string;
+  textMaterials?: string[];
+  imageMaterials?: Array<{
+    url: string;
+    alt?: string;
+    width?: number;
+    height?: number;
+    dataUrl?: string;
+  }>;
   fieldCount?: number;
   source?: string;
 }
@@ -27,10 +35,10 @@ export interface LocalReview {
 
 export interface ReviewSettings {
   enabled: boolean;
-  gateClicks: boolean;
   requiredTerms: string[];
   forbiddenTerms: string[];
   llmEnabled: boolean;
+  llmIncludeImages: boolean;
   llmProtocol: "responses" | "chat_completions";
   llmModel: string;
   llmBaseUrl: string;
@@ -38,13 +46,13 @@ export interface ReviewSettings {
 
 export const DEFAULT_SETTINGS: ReviewSettings = {
   enabled: true,
-  gateClicks: true,
   requiredTerms: [],
   forbiddenTerms: [],
   llmEnabled: false,
+  llmIncludeImages: false,
   llmProtocol: "responses",
-  llmModel: "gpt-4o-mini",
-  llmBaseUrl: "https://api.openai.com/v1"
+  llmModel: "gpt-5.6-luna",
+  llmBaseUrl: "https://api.acucompute.com/v1"
 };
 
 export function splitTerms(value: unknown): string[] {
@@ -62,10 +70,10 @@ export function normalizeSettings(
 ): ReviewSettings {
   return {
     enabled: settings.enabled !== false,
-    gateClicks: settings.gateClicks !== false,
     requiredTerms: splitTerms(settings.requiredTerms),
     forbiddenTerms: splitTerms(settings.forbiddenTerms),
     llmEnabled: settings.llmEnabled === true,
+    llmIncludeImages: settings.llmIncludeImages === true,
     llmProtocol:
       settings.llmProtocol === "chat_completions"
         ? "chat_completions"

@@ -31,11 +31,93 @@ test("extracts structured text from Responses and Chat Completions", () => {
   );
 });
 
+test("includes captured data URLs in multimodal request content", () => {
+  const dataUrl = "data:image/png;base64,ZmFrZQ==";
+  const draft = {
+    nodeId: "node-image",
+    prompt: "审阅图片",
+    imageMaterials: [{ url: "https://example.com/image.png", dataUrl }]
+  };
+  assert.deepEqual(llmInternals.userContent(draft, true)[1], {
+    type: "image_url",
+    image_url: { url: dataUrl }
+  });
+  assert.deepEqual(llmInternals.responseInput(draft, true)[0].content[1], {
+    type: "input_image",
+    image_url: dataUrl
+  });
+  assert.deepEqual(llmInternals.userContent(draft, false), [
+    { type: "text", text: llmInternals.compactDraft(draft) }
+  ]);
+});
+
 test("rejects non-OpenAI base URLs in the personal 0.1 build", () => {
   assert.throws(
     () => llmInternals.assertOpenAiUrl("http://localhost:3000/v1"),
     /只允许请求/
   );
+});
+
+test("retries without structured output when a provider rejects the format", async () => {
+  const requests: any[] = [];
+  const server = http.createServer(async (request, response) => {
+    let raw = "";
+    for await (const chunk of request) raw += chunk;
+    requests.push(JSON.parse(raw));
+    response.setHeader("Content-Type", "application/json");
+    if (requests.length === 1) {
+      response.statusCode = 400;
+      response.end(JSON.stringify({ error: { message: "response_format is unavailable" } }));
+      return;
+    }
+    response.end(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            decision: "allow",
+            summary: "图片和文字素材已审阅。",
+            issues: [],
+            suggestions: []
+          })
+        }
+      }]
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const baseUrl = `http://127.0.0.1:${address.port}/v1`;
+  const dataUrl = "data:image/png;base64,ZmFrZQ==";
+
+  try {
+    const result = await reviewWithLlm(
+      {
+        nodeId: "node-image",
+        prompt: "审阅图片",
+        imageMaterials: [{ url: "https://example.com/image.png", dataUrl }]
+      },
+      {
+        apiKey: "test-key",
+        includeImages: true,
+        protocol: "chat_completions",
+        model: "vision-test",
+        baseUrl
+      },
+      { allowTestEndpoint: true }
+    );
+    assert.equal(result.decision, "allow");
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].response_format.type, "json_schema");
+    assert.equal(requests[1].response_format, undefined);
+    assert.deepEqual(requests[1].messages[1].content[1], {
+      type: "image_url",
+      image_url: { url: dataUrl }
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  }
 });
 
 test("runs the complete Responses and Chat Completions HTTP flows", async () => {
@@ -81,6 +163,7 @@ test("runs the complete Responses and Chat Completions HTTP flows", async () => 
       draft,
       {
         apiKey: "test-key",
+        includeImages: true,
         protocol: "responses",
         model: "test-model",
         baseUrl
@@ -91,6 +174,7 @@ test("runs the complete Responses and Chat Completions HTTP flows", async () => 
       draft,
       {
         apiKey: "test-key",
+        includeImages: true,
         protocol: "chat_completions",
         model: "test-model",
         baseUrl

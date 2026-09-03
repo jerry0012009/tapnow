@@ -15,6 +15,7 @@ export interface LlmReview {
 
 export interface LlmSettings {
   apiKey: string;
+  includeImages: boolean;
   protocol: "responses" | "chat_completions";
   model: string;
   baseUrl: string;
@@ -65,8 +66,55 @@ function compactDraft(draft: ReviewDraft): string {
     node_id: draft.nodeId ?? null,
     node_type: draft.nodeType ?? null,
     prompt: String(draft.prompt ?? "").slice(0, 4000),
-    upstream_context: String(draft.upstreamSummary ?? "").slice(0, 2000)
+    upstream_context: String(draft.upstreamSummary ?? "").slice(0, 2000),
+    text_materials: (draft.textMaterials || []).slice(0, 8).map((item) => item.slice(0, 1000)),
+    image_materials: (draft.imageMaterials || []).slice(0, 6).map((item) => ({
+      url: item.url.slice(0, 2000),
+      alt: String(item.alt || "").slice(0, 300),
+      width: item.width || null,
+      height: item.height || null,
+      uploadable: Boolean(item.dataUrl)
+    }))
   });
+}
+
+function imageUrls(draft: ReviewDraft, includeImages: boolean): string[] {
+  if (!includeImages) return [];
+  return (draft.imageMaterials || [])
+    .map((item) => item.dataUrl || item.url)
+    .filter((url) => /^(?:https?:\/\/|data:image\/)/i.test(url))
+    .slice(0, 4);
+}
+
+function userContent(draft: ReviewDraft, includeImages: boolean) {
+  const text = compactDraft(draft);
+  return [
+    { type: "text", text },
+    ...imageUrls(draft, includeImages).map((url) => ({
+      type: "image_url",
+      image_url: { url }
+    }))
+  ];
+}
+
+function responseInput(draft: ReviewDraft, includeImages: boolean) {
+  return [{
+    role: "user",
+    content: [
+      { type: "input_text", text: compactDraft(draft) },
+      ...imageUrls(draft, includeImages).map((url) => ({
+        type: "input_image",
+        image_url: url
+      }))
+    ]
+  }];
+}
+
+function withoutStructuredOutput(body: Record<string, any>): Record<string, any> {
+  const fallback = { ...body };
+  delete fallback.response_format;
+  delete fallback.text;
+  return fallback;
 }
 
 function parseJson(
@@ -125,10 +173,10 @@ function assertOpenAiUrl(baseUrl: string, allowTestEndpoint = false): string {
     ["127.0.0.1", "localhost"].includes(url.hostname);
   if (
     (!testEndpoint && url.protocol !== "https:") ||
-    (!testEndpoint && url.hostname !== "api.openai.com")
+    (!testEndpoint && !["api.openai.com", "api.acucompute.com"].includes(url.hostname))
   ) {
     throw new Error(
-      "0.1 只允许请求 https://api.openai.com；自定义兼容端点留到后续版本。"
+      "0.1 只允许请求 OpenAI 或 ACU 的 HTTPS API 端点。"
     );
   }
   return url.toString().replace(/\/+$/, "");
@@ -142,7 +190,6 @@ export async function reviewWithLlm(
   if (!settings.apiKey) throw new Error("尚未配置 API Key。");
   const baseUrl = assertOpenAiUrl(settings.baseUrl, options.allowTestEndpoint);
   const fetchImpl = options.fetchImpl || fetch;
-  const input = compactDraft(draft);
   const headers = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${settings.apiKey}`
@@ -154,7 +201,7 @@ export async function reviewWithLlm(
           model: settings.model,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: input }
+            { role: "user", content: userContent(draft, settings.includeImages) }
           ],
           response_format: {
             type: "json_schema",
@@ -168,7 +215,7 @@ export async function reviewWithLlm(
       : {
           model: settings.model,
           instructions: SYSTEM_PROMPT,
-          input,
+          input: responseInput(draft, settings.includeImages),
           text: {
             format: {
               type: "json_schema",
@@ -183,12 +230,21 @@ export async function reviewWithLlm(
     settings.protocol === "chat_completions"
       ? `${baseUrl}/chat/completions`
       : `${baseUrl}/responses`;
-  const response = await fetchImpl(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body)
-  });
-  const raw = await response.text();
+  const request = (requestBody: Record<string, any>) =>
+    fetchImpl(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(requestBody)
+    });
+  let response = await request(body);
+  let raw = await response.text();
+  if (
+    !response.ok &&
+    /response_format|json_schema|unavailable/i.test(raw)
+  ) {
+    response = await request(withoutStructuredOutput(body));
+    raw = await response.text();
+  }
   if (!response.ok) {
     throw new Error(
       `LLM 请求失败 HTTP ${response.status}: ${raw.slice(0, 500)}`
@@ -212,8 +268,12 @@ export const llmInternals = {
   SYSTEM_PROMPT,
   REVIEW_SCHEMA,
   compactDraft,
+  userContent,
+  responseInput,
   parseJson,
   responseText,
   chatText,
   assertOpenAiUrl
+  ,
+  withoutStructuredOutput
 };

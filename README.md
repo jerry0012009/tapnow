@@ -23,8 +23,8 @@
 个人试用的最小 Chrome 副驾驶扩展见
 [安装包说明](releases/README.md)：用户下载 ZIP、解压并在 Chrome 扩展页加载，
 不需要 Node.js 或 npm。WXT 源码在 `wxt.config.ts`、`entrypoints/` 和
-`utils/`，也可以在扩展后台通过 Responses 或 Chat Completions 调用 OpenAI
-审阅当前节点。
+`utils/`，也可以在扩展后台通过 Responses 或 Chat Completions 调用 OpenAI/ACU
+审阅当前 focus 节点的文字和可选图片素材；插件不拦截运行请求。
 
 ## 环境
 
@@ -106,12 +106,13 @@ npm run extension:dev
 扩展 popup 可以配置：
 
 - 本地团队要求词和禁用词
-- 是否拦截运行/生成按钮
+- 是否启用副驾驶
 - 是否启用 LLM 审阅
+- 是否把图片素材发送给 LLM
 - `responses` 或 `chat_completions` 协议
 - 模型、API Base URL 和 API Key
 
-0.1 只允许 `https://api.openai.com`，API Key 存在扩展的本机
+0.1 支持 `https://api.openai.com` 和 `https://api.acucompute.com`，API Key 存在扩展的本机
 `storage.local`，不会写入仓库或同步到 Chrome 账号。正式团队版建议改为自有
 后端代理，不把长期 API Key 放在浏览器端。
 
