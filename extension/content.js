@@ -164,7 +164,7 @@
       ${suggestionsHtml}
       <div class="notice">0.1 版本只做本地规则审核，不会把提示词上传到外部服务。</div>
     `;
-    approve.textContent = result.decision === "block" ? "仍然运行" : "继续运行";
+    approve.textContent = result.decision === "block" ? "强制运行" : "继续运行";
     approve.disabled = false;
   }
 
