@@ -1,12 +1,6 @@
-import fs from "node:fs";
-import vm from "node:vm";
 import test from "node:test";
 import assert from "node:assert/strict";
-
-const source = fs.readFileSync(new URL("../extension/reviewer.js", import.meta.url), "utf8");
-const sandbox = { globalThis: {} };
-vm.runInNewContext(source, sandbox);
-const { reviewDraft } = sandbox.globalThis.TapnowCompanionReviewer;
+import { reviewDraft } from "../utils/reviewer";
 
 test("blocks an empty prompt", () => {
   const result = reviewDraft({ prompt: "" });

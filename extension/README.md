@@ -1,56 +1,80 @@
-# TapNow Companion 0.1
+# TapNow Companion WXT
 
-这是一个用于个人试用的最小 Chrome Manifest V3 扩展。它只在
-`https://app.tapnow.ai/canvas/*` 页面工作。
+扩展源码已迁移到仓库根目录的 WXT 入口：
+
+- `wxt.config.ts`
+- `entrypoints/`
+- `utils/`
+
+构建：
+
+```bash
+npm run extension:build
+```
+
+然后在 Chrome `chrome://extensions` 中开启开发者模式，加载
+`.output/chrome-mv3/`。
 
 ## 0.1 能做什么
 
-- 在 TapNow Canvas 右下角显示“副驾驶”入口。
-- 识别页面上的运行、生成、执行、重试等按钮。
-- 在运行按钮触发前暂停一次操作。
-- 读取当前页面可见的提示词、画布 ID、可能的节点 ID 和附近上下文。
-- 在右侧审核面板中显示输入和本地检查结果。
-- 检查空提示词、过短提示词、模糊质量描述、团队要求词和禁用词。
+- 在 TapNow Canvas 页面显示运行前审核面板。
+- 读取当前页面可见的提示词和少量节点上下文。
+- 运行前执行少量本地规则：空提示词、团队禁用词；团队要求词只产生提醒。
+- 可选地把当前节点草稿发送给 OpenAI 的 Responses 或 Chat Completions 接口。
+- 以固定短提示词请求 JSON 结构化审阅结果。
 - 用户确认后重新触发原始运行按钮。
-- 在扩展弹窗中修改团队要求词和禁用词。
 
-0.1 不做以下事情：
+0.1 不调用 TapNow 私有 API，不读取 TapNow Token，不处理 WebSocket/SSE，
+也不自动修改提示词。当前只允许 `https://api.openai.com/v1`，API Key
+保存在扩展本机的 `storage.local` 中，不会提交到 Git 或同步到 Chrome 账号。
 
-- 不读取或保存 `access_token`、Cookie 或浏览器登录态。
-- 不调用 TapNow 私有 API。
-- 不上传提示词到外部模型或服务器。
-- 不自动改写节点内容。
-- 不拦截 WebSocket、SSE 或所有网络请求。
-- 不保证覆盖 TapNow 的快捷键、右键菜单或未来改版后的按钮。
+## LLM 设置
 
-## 安装
+点击扩展图标后可以设置：
 
-1. 打开 Chrome `chrome://extensions`。
-2. 开启右上角“开发者模式”。
-3. 点击“加载已解压的扩展程序”。
-4. 选择本仓库的 `extension/` 目录。
-5. 打开或刷新 TapNow Canvas 页面。
-6. 点击扩展图标配置团队要求词和禁用词。
+- `Responses` 或 `Chat Completions`
+- 模型名称，默认 `gpt-4o-mini`
+- API Base URL，0.1 固定为 `https://api.openai.com/v1`
+- API Key
 
-建议先关闭“拦截运行/生成按钮”，只点击页面右下角的“副驾驶”入口测试识别结果。
-确认识别正确后，再开启自动拦截。
+发送给 LLM 的内容只包括：
 
-## 使用方式
+```json
+{
+  "canvas_id": "...",
+  "node_id": "...",
+  "node_type": "...",
+  "prompt": "...",
+  "upstream_context": "..."
+}
+```
 
-直接点击 TapNow 的运行/生成按钮，扩展会打开审核面板。没有发现问题时可以继续运行；
-发现黄色提醒时由用户决定是否继续；命中禁用词或空提示词时，面板会明确显示阻断原因。
-0.1 为个人试用版本，仍保留“强制运行”按钮；团队版应把硬规则改为不可绕过。
+固定审阅要求在 `utils/llm.ts` 中维护，模型必须返回：
 
-页面结构和按钮文字属于 TapNow 前端实现，未来升级可能导致自动识别失效。
-如果页面出现异常，先在扩展弹窗中关闭“拦截运行/生成按钮”。
+```json
+{
+  "decision": "allow | warn | block",
+  "summary": "...",
+  "issues": [],
+  "suggestions": []
+}
+```
 
-## 下一步
+个人试用时，`block` 仍保留“强制运行”；团队版再决定是否改成不可绕过。
 
-0.2 可以增加：
+## 验证
 
-- 读取节点图中的真实 source/target 关系，而不是只读取页面附近文本。
-- 使用页面请求桥接获取完整的当前节点草稿，但仍然不传输 Token。
-- “应用建议后运行”。
-- 运行完成后的输出质量检查。
-- 可导入的团队规则文件和版本号。
-- 可选的企业审核服务。
+服务器已验证：
+
+- WXT production build
+- 原生 Chromium 加载构建产物
+- TapNow 匹配页面注入
+- 运行按钮被拦截
+- 审核面板显示提示词
+- 用户点击确认后原始按钮继续执行
+- popup 配置页可打开并显示两种 API 协议
+- Responses 和 Chat Completions 的真实 HTTP mock 请求、鉴权和结果解析
+
+由于服务器没有真实 OpenAI API Key，未执行真实计费请求。个人试用时应使用
+自己的低权限、低额度 API Key；正式团队版建议使用服务端代理，不把长期 Key
+放在浏览器扩展中。

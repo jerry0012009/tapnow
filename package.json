@@ -7,9 +7,16 @@
     "audit": "node scripts/audit-canvas.mjs",
     "export": "node scripts/export-canvas.mjs",
     "record": "node scripts/record-session.mjs",
-    "test": "node --test"
+    "extension:dev": "wxt --browser chrome",
+    "extension:build": "wxt build --browser chrome --mv3",
+    "extension:zip": "wxt zip --browser chrome --mv3",
+    "test": "tsx --test"
   },
   "dependencies": {
     "playwright": "1.62.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.3",
+    "wxt": "0.21.4"
   }
 }

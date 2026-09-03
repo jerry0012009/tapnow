@@ -21,12 +21,13 @@
 [examples/canvas-export-TEST-0903](examples/canvas-export-TEST-0903/README.md)。
 
 个人试用的最小 Chrome 副驾驶扩展见
-[extension](extension/README.md)：它只做本地运行前审核，不读取 Token，
-不上传提示词，不调用 TapNow 私有 API。
+[WXT 说明](extension/README.md)：源码在 `wxt.config.ts`、`entrypoints/` 和
+`utils/`，构建后加载 `.output/chrome-mv3/`。它只做本地运行前审核，
+也可以在扩展后台通过 Responses 或 Chat Completions 调用 OpenAI 审阅当前节点。
 
 ## 环境
 
-- Node.js 20+
+- Node.js 22+（WXT 0.21）
 - Chrome、Chromium 或 Playwright Chromium
 - 一个已登录且有权访问目标画布的 TapNow 账号
 
@@ -86,6 +87,33 @@ npm run audit
 npm test
 ```
 
+构建 Chrome 扩展：
+
+```bash
+npm run extension:build
+```
+
+开发模式：
+
+```bash
+npm run extension:dev
+```
+
+构建完成后，在 Chrome `chrome://extensions` 中开启开发者模式，加载
+`.output/chrome-mv3/`。
+
+扩展 popup 可以配置：
+
+- 本地团队要求词和禁用词
+- 是否拦截运行/生成按钮
+- 是否启用 LLM 审阅
+- `responses` 或 `chat_completions` 协议
+- 模型、API Base URL 和 API Key
+
+0.1 只允许 `https://api.openai.com`，API Key 存在扩展的本机
+`storage.local`，不会写入仓库或同步到 Chrome 账号。正式团队版建议改为自有
+后端代理，不把长期 API Key 放在浏览器端。
+
 ## 产物
 
 `export-canvas.mjs` 会生成：
@@ -107,6 +135,7 @@ npm test
 ## 安全边界
 
 - 不要提交 `artifacts/private/`。
+- 不要提交 `.output/` 或 `.wxt/` 构建缓存。
 - 不要把 `access_token`、`refresh_token`、Cookie 或浏览器 profile 上传到 Git。
 - CDP 端口必须绑定 `127.0.0.1`，不要暴露到公网。
 - 导出脚本读取当前浏览器内存中的 token，但不会打印或写入文件。
