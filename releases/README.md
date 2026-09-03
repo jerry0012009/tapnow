@@ -1,11 +1,11 @@
-# TapNow Companion 0.1.3
+# TapNow Companion 0.1.4
 
-`tapnow-companion-0.1.3-chrome.zip` 是已经构建好的 Chrome 扩展包，普通
+`tapnow-companion-0.1.4-chrome.zip` 是已经构建好的 Chrome 扩展包，普通
 试用用户不需要安装 Node.js、npm 或运行任何构建命令。
 
 ## 个人安装
 
-1. 下载 `tapnow-companion-0.1.3-chrome.zip`。
+1. 下载 `tapnow-companion-0.1.4-chrome.zip`。
 2. 解压到一个不会被删除的目录。
 3. 打开 Chrome `chrome://extensions`。
 4. 开启右上角“开发者模式”。
@@ -14,7 +14,8 @@
 7. 打开或刷新 TapNow Canvas 页面。
 
 第一次试用建议先打开一个 TapNow 节点并让它获得 focus，再点击页面右下角的
-“副驾驶”。面板读取当前 focus 节点；点击“检测”才会执行 LLM 审阅。
+“副驾驶”。面板读取当前 focus 节点，并在本地预检图片是否可发送；点击“检测”
+才会把可发送图片交给 LLM 审阅。
 
 ## 重要说明
 

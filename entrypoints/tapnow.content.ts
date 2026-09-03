@@ -294,7 +294,8 @@ export default defineContentScript({
         draft: ReviewDraft,
         local: LocalReview,
         llm: LlmResponse["result"] | null = null,
-        llmError = ""
+        llmError = "",
+        imagePreparationAttempted = false
       ) {
         const issues = [...local.issues, ...(llm?.issues || [])];
         const issueHtml = issues.length
@@ -319,10 +320,14 @@ export default defineContentScript({
         const uploadable =
           draft.imageMaterials?.filter((image) => image.dataUrl).length || 0;
         const materialSummary = state.settings.llmIncludeImages
-          ? `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 已准备发送图片 ${uploadable} 项`
+          ? imagePreparationAttempted
+            ? `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 可发送图片 ${uploadable} 项`
+            : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 正在检查图片可发送性`
           : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 图片发送未开启`;
         const imageNotice = state.settings.llmIncludeImages
-          ? "点击“检测”才会调用 LLM；检测时会发送已准备的图片素材。"
+          ? imagePreparationAttempted
+            ? "图片仅在本地完成预检；点击“检测”才会发送给 LLM。"
+            : "正在本地准备图片；此过程不会调用 LLM。"
           : "点击“检测”才会调用 LLM；当前未开启图片发送，只传图片元数据。";
 
         body.innerHTML = `
@@ -363,27 +368,48 @@ export default defineContentScript({
 
       async function openPanel() {
         const draft = await getDraft(false);
+        const sequence = ++state.reviewSequence;
         panel.classList.remove("hidden");
         render(draft, reviewDraft(draft, state.settings));
+        if (
+          state.settings.llmIncludeImages &&
+          (draft.imageMaterials?.length || 0) > 0
+        ) {
+          const preparedDraft = await getDraft(true);
+          if (
+            sequence === state.reviewSequence &&
+            !panel.classList.contains("hidden")
+          ) {
+            render(
+              preparedDraft,
+              reviewDraft(preparedDraft, state.settings),
+              null,
+              "",
+              true
+            );
+          }
+        }
       }
 
       async function detect() {
         detectButton.disabled = true;
-        const draft = await getDraft(state.settings.llmIncludeImages);
+        const sequence = ++state.reviewSequence;
+        const prepareImages = state.settings.llmIncludeImages;
+        const draft = await getDraft(prepareImages);
         const local = reviewDraft(draft, state.settings);
         panel.classList.remove("hidden");
-        render(draft, local);
+        render(draft, local, null, "", prepareImages);
         if (!state.settings.llmEnabled) {
           render(
             draft,
             local,
             null,
-            "LLM 审阅未启用，请在扩展 popup 中开启。"
+            "LLM 审阅未启用，请在扩展 popup 中开启。",
+            prepareImages
           );
           detectButton.disabled = false;
           return;
         }
-        const sequence = ++state.reviewSequence;
         body.insertAdjacentHTML(
           "beforeend",
           `<div class="notice">正在请求 LLM 审阅...</div>`
@@ -398,7 +424,8 @@ export default defineContentScript({
               draft,
               local,
               response?.ok ? response.result || null : null,
-              response?.error || ""
+              response?.error || "",
+              prepareImages
             );
           }
         } catch (error) {
@@ -407,7 +434,8 @@ export default defineContentScript({
               draft,
               local,
               null,
-              error instanceof Error ? error.message : String(error)
+              error instanceof Error ? error.message : String(error),
+              prepareImages
             );
           }
         } finally {

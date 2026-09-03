@@ -31,6 +31,26 @@ test("extracts structured text from Responses and Chat Completions", () => {
   );
 });
 
+test("extracts structured text from a Responses event stream", () => {
+  const result = JSON.stringify({
+    decision: "allow",
+    summary: "流式图片审阅完成。",
+    issues: [],
+    suggestions: []
+  });
+  const stream = [
+    `event: response.output_text.delta\ndata: ${JSON.stringify({
+      type: "response.output_text.delta",
+      delta: result
+    })}`,
+    `event: response.completed\ndata: ${JSON.stringify({
+      type: "response.completed",
+      response: { status: "completed", output: [] }
+    })}`
+  ].join("\n\n");
+  assert.equal(llmInternals.responsesStreamText(stream), result);
+});
+
 test("includes captured data URLs in multimodal request content", () => {
   const dataUrl = "data:image/png;base64,ZmFrZQ==";
   const draft = {
@@ -120,6 +140,65 @@ test("retries without structured output when a provider rejects the format", asy
   }
 });
 
+test("retries an ACU bad response body before falling back", async () => {
+  const requests: any[] = [];
+  const server = http.createServer(async (request, response) => {
+    let raw = "";
+    for await (const chunk of request) raw += chunk;
+    requests.push(JSON.parse(raw));
+    response.setHeader("Content-Type", "application/json");
+    if (requests.length < 3) {
+      response.statusCode = 500;
+      response.end(JSON.stringify({
+        error: {
+          message: "invalid character 'e' looking for beginning of value",
+          type: "bad_response_body",
+          code: "bad_response_body"
+        }
+      }));
+      return;
+    }
+    response.end(JSON.stringify({
+      choices: [{
+        message: {
+          content: "```json\n" + JSON.stringify({
+            decision: "warn",
+            summary: "重试后成功。",
+            issues: [],
+            suggestions: ["继续检查图片。"]
+          }) + "\n```"
+        }
+      }]
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const result = await reviewWithLlm(
+      { prompt: "审阅真实节点" },
+      {
+        apiKey: "test-key",
+        includeImages: true,
+        protocol: "chat_completions",
+        model: "vision-test",
+        baseUrl: `http://127.0.0.1:${address.port}/v1`
+      },
+      { allowTestEndpoint: true, retryDelayMs: 0 }
+    );
+    assert.equal(result.summary, "重试后成功。");
+    assert.equal(requests.length, 3);
+    assert.equal(requests[0].response_format.type, "json_schema");
+    assert.equal(requests[1].response_format.type, "json_schema");
+    assert.equal(requests[2].response_format, undefined);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  }
+});
+
 test("runs the complete Responses and Chat Completions HTTP flows", async () => {
   const requests: Array<{ url: string; body: any; authorization: string }> = [];
   const server = http.createServer(async (request, response) => {
@@ -188,6 +267,7 @@ test("runs the complete Responses and Chat Completions HTTP flows", async () => 
     assert.equal(requests[1].url, "/v1/chat/completions");
     assert.equal(requests[0].authorization, "Bearer test-key");
     assert.equal(requests[1].authorization, "Bearer test-key");
+    assert.equal(requests[0].body.stream, true);
     assert.equal(requests[0].body.text.format.type, "json_schema");
     assert.equal(requests[1].body.response_format.type, "json_schema");
   } finally {

@@ -24,6 +24,7 @@ export interface LlmSettings {
 interface LlmRequestOptions {
   fetchImpl?: typeof fetch;
   allowTestEndpoint?: boolean;
+  retryDelayMs?: number;
 }
 
 const SYSTEM_PROMPT = [
@@ -120,7 +121,18 @@ function withoutStructuredOutput(body: Record<string, any>): Record<string, any>
 function parseJson(
   text: string
 ): Omit<LlmReview, "provider" | "model"> {
-  const parsed = JSON.parse(text);
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1];
+  const candidate = fenced || trimmed;
+  let parsed: any;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch {
+    const firstBrace = candidate.indexOf("{");
+    const lastBrace = candidate.lastIndexOf("}");
+    if (firstBrace < 0 || lastBrace <= firstBrace) throw new Error("LLM 返回的审阅结果不是有效 JSON。");
+    parsed = JSON.parse(candidate.slice(firstBrace, lastBrace + 1));
+  }
   const decision: ReviewDecision = ["allow", "warn", "block"].includes(
     parsed.decision
   )
@@ -156,6 +168,57 @@ function responseText(payload: any): string {
   return "";
 }
 
+function responsesStreamText(raw: string): string {
+  const deltas: string[] = [];
+  let completedText = "";
+  let doneText = "";
+
+  for (const block of raw.split(/\r?\n\r?\n/)) {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+    if (!data || data === "[DONE]") continue;
+
+    let payload: any;
+    try {
+      payload = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    if (
+      payload.type === "response.output_text.delta" &&
+      typeof payload.delta === "string"
+    ) {
+      deltas.push(payload.delta);
+    }
+    if (
+      payload.type === "response.output_text.done" &&
+      typeof payload.text === "string"
+    ) {
+      doneText = payload.text;
+    }
+    if (
+      payload.type === "response.completed" ||
+      payload.type === "response.done"
+    ) {
+      completedText = responseText(payload.response);
+    }
+    if (payload.type === "response.failed" || payload.type === "error") {
+      const error = payload.response?.error || payload.error || payload;
+      throw new Error(
+        `LLM Responses 流失败：${String(
+          error.message || error.code || payload.type
+        )}`
+      );
+    }
+  }
+
+  return completedText || doneText || deltas.join("");
+}
+
 function chatText(payload: any): string {
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content === "string") return content;
@@ -180,6 +243,16 @@ function assertOpenAiUrl(baseUrl: string, allowTestEndpoint = false): string {
     );
   }
   return url.toString().replace(/\/+$/, "");
+}
+
+function retryableFailure(status: number, raw: string): boolean {
+  return (
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500 ||
+    /bad_response_body|temporar|timeout|upstream/i.test(raw)
+  );
 }
 
 export async function reviewWithLlm(
@@ -216,6 +289,7 @@ export async function reviewWithLlm(
           model: settings.model,
           instructions: SYSTEM_PROMPT,
           input: responseInput(draft, settings.includeImages),
+          stream: true,
           text: {
             format: {
               type: "json_schema",
@@ -236,14 +310,40 @@ export async function reviewWithLlm(
       headers,
       body: JSON.stringify(requestBody)
     });
-  let response = await request(body);
-  let raw = await response.text();
+  const retryDelayMs = options.retryDelayMs ?? 400;
+  const requestWithRetry = async (
+    requestBody: Record<string, any>,
+    retries: number
+  ) => {
+    let response = await request(requestBody);
+    let raw = await response.text();
+    for (
+      let attempt = 0;
+      !response.ok &&
+      attempt < retries &&
+      retryableFailure(response.status, raw);
+      attempt++
+    ) {
+      if (retryDelayMs > 0) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, retryDelayMs * (attempt + 1))
+        );
+      }
+      response = await request(requestBody);
+      raw = await response.text();
+    }
+    return { response, raw };
+  };
+
+  let { response, raw } = await requestWithRetry(body, 1);
   if (
     !response.ok &&
-    /response_format|json_schema|unavailable/i.test(raw)
+    /response_format|json_schema|unavailable|bad_response_body/i.test(raw)
   ) {
-    response = await request(withoutStructuredOutput(body));
-    raw = await response.text();
+    ({ response, raw } = await requestWithRetry(
+      withoutStructuredOutput(body),
+      0
+    ));
   }
   if (!response.ok) {
     throw new Error(
@@ -251,11 +351,13 @@ export async function reviewWithLlm(
     );
   }
 
-  const payload = JSON.parse(raw);
   const text =
     settings.protocol === "chat_completions"
-      ? chatText(payload)
-      : responseText(payload);
+      ? chatText(JSON.parse(raw))
+      : /text\/event-stream/i.test(response.headers.get("content-type") || "") ||
+          /^\s*(?:event|data):/m.test(raw)
+        ? responsesStreamText(raw)
+        : responseText(JSON.parse(raw));
   if (!text) throw new Error("LLM 返回中没有找到结构化文本。");
   return {
     ...parseJson(text),
@@ -272,8 +374,9 @@ export const llmInternals = {
   responseInput,
   parseJson,
   responseText,
+  responsesStreamText,
   chatText,
-  assertOpenAiUrl
-  ,
-  withoutStructuredOutput
+  assertOpenAiUrl,
+  withoutStructuredOutput,
+  retryableFailure
 };
