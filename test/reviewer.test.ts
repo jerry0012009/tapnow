@@ -11,6 +11,33 @@ test("recovers prompt text rendered by a non-editing Text node", () => {
   );
 });
 
+test("recovers the real TapNow English placeholder form", () => {
+  assert.equal(
+    inferPromptFromNodeText(
+      "Text Double-click to start editing... 让两个furry 男孩 暧昧的交互，请帮我写提示词1"
+    ),
+    "让两个furry 男孩 暧昧的交互，请帮我写提示词"
+  );
+});
+
+test("removes the real node model badge and trailing controls", () => {
+  assert.equal(
+    inferPromptFromNodeText(
+      "Pin Double-click to start editing... 让两个furry 男孩 暧昧的交互，请帮我写提示词 Gemini 3.1 Flash Lite 1× - -"
+    ),
+    "让两个furry 男孩 暧昧的交互，请帮我写提示词"
+  );
+});
+
+test("removes controls when TapNow renders trailing dashes without a space", () => {
+  assert.equal(
+    inferPromptFromNodeText(
+      "让两个furry 男孩 暧昧的交互，请帮我写提示词--"
+    ),
+    "让两个furry 男孩 暧昧的交互，请帮我写提示词"
+  );
+});
+
 test("blocks an empty prompt", () => {
   const result = reviewDraft({ prompt: "" });
   assert.equal(result.decision, "block");

@@ -53,13 +53,17 @@ export function inferPromptFromNodeText(value: unknown): string {
     .trim();
   text = text.replace(DRAG_HELP_TEXT, " ");
   text = text.replace(/双击开始编辑(?:\.\.\.|…)?/g, " ");
-  text = text.replace(/Double-click to edit(?:\.\.\.|…)?/gi, " ");
-  text = text.replace(/^(?:Text|Image|Video|Audio)\s*Pin\b/i, " ");
+  text = text.replace(/Double-click to (?:start )?edit(?:ing)?(?:\.\.\.|…)?/gi, " ");
+  text = text.replace(/^(?:Text|Image|Video|Audio)(?:\s*Pin)?/i, " ");
+  text = text.replace(/^Pin\b/i, " ");
   text = text.replace(
-    /(?:Gemini|GPT|Claude|Flux|Midjourney|DALL[·\s-]?E|Stable Diffusion)\b.*?\d+\s*[×x]\s*\d+\s*$/i,
+    /(?:Gemini|GPT|Claude|Flux|Midjourney|DALL[·\s-]?E|Stable Diffusion)\b.*$/i,
     " "
   );
   text = text.replace(/\s+\d+\s*[×x]\s*\d+\s*$/i, " ");
+  text = text.replace(/1\s*$/i, " ");
+  text = text.replace(/\s+(?:-\s*){1,3}$/i, " ");
+  text = text.replace(/-{1,3}\s*$/i, " ");
   return text.replace(/\s+/g, " ").trim();
 }
 
