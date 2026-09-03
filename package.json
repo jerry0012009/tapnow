@@ -1,0 +1,15 @@
+{
+  "name": "tapnow-canvas-audit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "audit": "node scripts/audit-canvas.mjs",
+    "export": "node scripts/export-canvas.mjs",
+    "record": "node scripts/record-session.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "playwright": "1.62.1"
+  }
+}
