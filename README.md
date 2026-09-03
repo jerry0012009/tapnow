@@ -21,9 +21,10 @@
 [examples/canvas-export-TEST-0903](examples/canvas-export-TEST-0903/README.md)。
 
 个人试用的最小 Chrome 副驾驶扩展见
-[WXT 说明](extension/README.md)：源码在 `wxt.config.ts`、`entrypoints/` 和
-`utils/`，构建后加载 `.output/chrome-mv3/`。它只做本地运行前审核，
-也可以在扩展后台通过 Responses 或 Chat Completions 调用 OpenAI 审阅当前节点。
+[安装包说明](releases/README.md)：用户下载 ZIP、解压并在 Chrome 扩展页加载，
+不需要 Node.js 或 npm。WXT 源码在 `wxt.config.ts`、`entrypoints/` 和
+`utils/`，也可以在扩展后台通过 Responses 或 Chat Completions 调用 OpenAI
+审阅当前节点。
 
 ## 环境
 

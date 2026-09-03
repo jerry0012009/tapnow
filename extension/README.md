@@ -15,6 +15,11 @@ npm run extension:build
 然后在 Chrome `chrome://extensions` 中开启开发者模式，加载
 `.output/chrome-mv3/`。
 
+普通试用用户不需要构建源码，直接使用
+`releases/tapnow-companion-0.1.0-chrome.zip`，解压后在
+`chrome://extensions` 中选择“加载已解压的扩展程序”。完整步骤见
+`releases/README.md`。
+
 ## 0.1 能做什么
 
 - 在 TapNow Canvas 页面显示运行前审核面板。
