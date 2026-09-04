@@ -16,7 +16,7 @@ npm run extension:build
 `.output/chrome-mv3/`。
 
 普通试用用户不需要构建源码，直接使用
-`releases/tapnow-companion-0.1.6-chrome.zip`，解压后在
+`releases/tapnow-companion-0.1.7-chrome.zip`，解压后在
 `chrome://extensions` 中选择“加载已解压的扩展程序”。完整步骤见
 `releases/README.md`。
 
@@ -32,7 +32,8 @@ npm run extension:build
   选择，超出预算的图片会显示为未发送。
 - 以配置页中的可编辑短提示词请求 JSON 结构化审阅结果。
 - 面板的“开发者信息”和 Console 会显示当前 focus、节点类型、输入、图片准备状态、
-  LLM 协议/模型和结果摘要，不包含 API Key 或图片 data URL。
+  LLM 协议/模型和结果摘要，不包含 API Key 或图片 data URL；每张已准备图片还会记录
+  是否压缩、压缩方式、原始字节数、发送字节数和压缩比例。
 - Responses 请求显式使用流式协议，并解析 ACU 返回的 Responses SSE 事件。
 
 0.1 不调用 TapNow 私有 API，不读取 TapNow Token，不处理 TapNow 的

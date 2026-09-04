@@ -24,6 +24,12 @@ export interface ReviewDraft {
     height?: number;
     dataUrl?: string;
     captureError?: string;
+    compression?: {
+      applied: boolean;
+      method: string;
+      originalBytes?: number | null;
+      preparedBytes?: number | null;
+    };
   }>;
   fieldCount?: number;
   source?: string;

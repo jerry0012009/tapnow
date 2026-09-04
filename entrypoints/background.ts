@@ -16,7 +16,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 async function compressImage(
   bytes: Uint8Array,
   contentType: string
-): Promise<Uint8Array | null> {
+): Promise<{ bytes: Uint8Array; method: string } | null> {
   try {
     const bitmap = await createImageBitmap(
       new Blob([bytes.buffer], { type: contentType })
@@ -44,7 +44,10 @@ async function compressImage(
         quality
       });
       if (output.size <= MAX_SINGLE_IMAGE_BYTES) {
-        return new Uint8Array(await output.arrayBuffer());
+        return {
+          bytes: new Uint8Array(await output.arrayBuffer()),
+          method: `offscreen-canvas-jpeg-${maxDimension}`
+        };
       }
     }
   } catch {
@@ -88,12 +91,24 @@ export default defineBackground(() => {
           }
           return {
             ok: true,
-            dataUrl: `data:image/jpeg;base64,${bytesToBase64(compressed)}`
+            dataUrl: `data:image/jpeg;base64,${bytesToBase64(compressed.bytes)}`,
+            compression: {
+              applied: true,
+              method: compressed.method,
+              originalBytes: bytes.length,
+              preparedBytes: compressed.bytes.length
+            }
           };
         }
         return {
           ok: true,
-          dataUrl: `data:${contentType.split(";")[0]};base64,${bytesToBase64(bytes)}`
+          dataUrl: `data:${contentType.split(";")[0]};base64,${bytesToBase64(bytes)}`,
+          compression: {
+            applied: false,
+            method: "original",
+            originalBytes: bytes.length,
+            preparedBytes: bytes.length
+          }
         };
       } catch (error) {
         return {

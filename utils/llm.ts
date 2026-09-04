@@ -127,7 +127,15 @@ function compactDraft(draft: ReviewDraft): string {
       alt: String(item.alt || "").slice(0, 300),
       width: item.width || null,
       height: item.height || null,
-      uploadable: Boolean(item.dataUrl)
+      uploadable: Boolean(item.dataUrl),
+      compression: item.compression
+        ? {
+            applied: item.compression.applied,
+            method: item.compression.method,
+            original_bytes: item.compression.originalBytes ?? null,
+            prepared_bytes: item.compression.preparedBytes ?? null
+          }
+        : null
     }))
   });
 }

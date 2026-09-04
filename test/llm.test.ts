@@ -84,6 +84,32 @@ test("includes captured data URLs in multimodal request content", () => {
   ]);
 });
 
+test("preserves image compression metadata in the review payload", () => {
+  const parsed = JSON.parse(
+    llmInternals.compactDraft({
+      prompt: "审阅图片",
+      imageMaterials: [
+        {
+          url: "https://example.com/compressed.jpg",
+          dataUrl: "data:image/jpeg;base64,ZmFrZQ==",
+          compression: {
+            applied: true,
+            method: "page-canvas-jpeg-2048",
+            originalBytes: 12_000_000,
+            preparedBytes: 800_000
+          }
+        }
+      ]
+    })
+  );
+  assert.deepEqual(parsed.image_materials[0].compression, {
+    applied: true,
+    method: "page-canvas-jpeg-2048",
+    original_bytes: 12_000_000,
+    prepared_bytes: 800_000
+  });
+});
+
 test("sends multiple prepared images and skips unprepared images", () => {
   const image = (name: string) => ({
     url: `https://example.com/${name}.png`,

@@ -206,22 +206,36 @@ export default defineContentScript({
 
       async function captureImage(
         image: HTMLImageElement
-      ): Promise<{ dataUrl?: string; error?: string }> {
+      ): Promise<{
+        dataUrl?: string;
+        error?: string;
+        compression?: {
+          applied: boolean;
+          method: string;
+          originalBytes?: number | null;
+          preparedBytes?: number | null;
+        };
+      }> {
         async function encodeCanvas(
           canvas: HTMLCanvasElement
-        ): Promise<string | undefined> {
+        ): Promise<{ dataUrl: string; bytes: number } | undefined> {
           for (const quality of [0.82, 0.68, 0.52]) {
             const output = await new Promise<Blob | null>((resolve) =>
               canvas.toBlob(resolve, "image/jpeg", quality)
             );
             if (output && output.size <= MAX_SINGLE_IMAGE_BYTES) {
-              return await blobToDataUrl(output);
+              return {
+                dataUrl: await blobToDataUrl(output),
+                bytes: output.size
+              };
             }
           }
           return undefined;
         }
 
-        async function compressBlob(blob: Blob): Promise<string | undefined> {
+        async function compressBlob(
+          blob: Blob
+        ): Promise<{ dataUrl: string; bytes: number } | undefined> {
           try {
             const bitmap = await createImageBitmap(blob);
             const maxDimension = 2048;
@@ -252,10 +266,28 @@ export default defineContentScript({
           if (response.ok) {
             const blob = await response.blob();
             if (blob.size <= MAX_SINGLE_IMAGE_BYTES) {
-              return { dataUrl: await blobToDataUrl(blob) };
+              return {
+                dataUrl: await blobToDataUrl(blob),
+                compression: {
+                  applied: false,
+                  method: "original",
+                  originalBytes: blob.size,
+                  preparedBytes: blob.size
+                }
+              };
             }
             const compressed = await compressBlob(blob);
-            if (compressed) return { dataUrl: compressed };
+            if (compressed) {
+              return {
+                dataUrl: compressed.dataUrl,
+                compression: {
+                  applied: true,
+                  method: "page-canvas-jpeg-2048",
+                  originalBytes: blob.size,
+                  preparedBytes: compressed.bytes
+                }
+              };
+            }
             return {
               error: `原图超过 ${MAX_SINGLE_IMAGE_BYTES / 1_000_000} MB，压缩后仍无法控制在发送上限内。`
             };
@@ -279,8 +311,18 @@ export default defineContentScript({
             canvas.width,
             canvas.height
           );
-          const dataUrl = await encodeCanvas(canvas);
-          if (dataUrl) return { dataUrl };
+          const encoded = await encodeCanvas(canvas);
+          if (encoded) {
+            return {
+              dataUrl: encoded.dataUrl,
+              compression: {
+                applied: true,
+                method: "page-canvas-jpeg-2048",
+                originalBytes: null,
+                preparedBytes: encoded.bytes
+              }
+            };
+          }
         } catch {
           // Fall through to the background fetch.
         }
@@ -288,9 +330,22 @@ export default defineContentScript({
           const response = (await browser.runtime.sendMessage({
             type: "tapnow:capture-image",
             url: source
-          })) as { ok?: boolean; dataUrl?: string; error?: string };
+          })) as {
+            ok?: boolean;
+            dataUrl?: string;
+            error?: string;
+            compression?: {
+              applied: boolean;
+              method: string;
+              originalBytes?: number | null;
+              preparedBytes?: number | null;
+            };
+          };
           return response?.ok && response.dataUrl
-            ? { dataUrl: response.dataUrl }
+            ? {
+                dataUrl: response.dataUrl,
+                compression: response.compression
+              }
             : { error: response?.error || "无法读取图片。" };
         } catch {
           return { error: "无法读取图片。" };
@@ -349,6 +404,7 @@ export default defineContentScript({
             const captured = await captureImage(image);
             material.dataUrl = captured.dataUrl;
             material.captureError = captured.error;
+            material.compression = captured.compression;
           }
           imageMaterials.push(material);
         }
@@ -454,6 +510,34 @@ export default defineContentScript({
             preparedBytes: image.dataUrl
               ? Math.round((image.dataUrl.length * 3) / 4)
               : 0,
+            compression: image.compression
+              ? {
+                  applied: image.compression.applied,
+                  method: image.compression.method,
+                  originalBytes: image.compression.originalBytes ?? null,
+                  preparedBytes:
+                    image.compression.preparedBytes ??
+                    (image.dataUrl
+                      ? Math.round((image.dataUrl.length * 3) / 4)
+                      : null),
+                  savedBytes:
+                    image.compression.originalBytes != null &&
+                    image.compression.preparedBytes != null
+                      ? image.compression.originalBytes -
+                        image.compression.preparedBytes
+                      : null,
+                  ratio:
+                    image.compression.originalBytes &&
+                    image.compression.preparedBytes
+                      ? Number(
+                          (
+                            image.compression.preparedBytes /
+                            image.compression.originalBytes
+                          ).toFixed(4)
+                        )
+                      : null
+                }
+              : null,
             captureError: image.captureError || null
           })),
           settings: {
