@@ -405,24 +405,45 @@ export async function reviewWithLlm(
     requestBody: Record<string, any>,
     retries: number
   ) => {
-    let response = await request(requestBody);
-    let raw = await response.text();
+    let response: Response | null = null;
+    let raw = "";
     for (
       let attempt = 0;
-      !response.ok &&
-      attempt < retries &&
-      retryableFailure(response.status, raw);
+      attempt <= retries;
       attempt++
     ) {
+      try {
+        response = await request(requestBody);
+        raw = await response.text();
+      } catch (error) {
+        if (attempt >= retries) {
+          throw new Error(
+            `LLM 网络请求失败（${endpoint}）：${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+        if (retryDelayMs > 0) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, retryDelayMs * (attempt + 1))
+          );
+        }
+        continue;
+      }
+      if (
+        response.ok ||
+        attempt >= retries ||
+        !retryableFailure(response.status, raw)
+      ) {
+        break;
+      }
       if (retryDelayMs > 0) {
         await new Promise((resolve) =>
           setTimeout(resolve, retryDelayMs * (attempt + 1))
         );
       }
-      response = await request(requestBody);
-      raw = await response.text();
     }
-    return { response, raw };
+    return { response: response!, raw };
   };
 
   let { response, raw } = await requestWithRetry(body, 1);

@@ -167,9 +167,19 @@ export default defineContentScript({
 
       function nodeTextOf(element: Element | null): string {
         if (!element) return "";
-        const clone = element.cloneNode(true) as Element;
+        const output = element.querySelector(
+          "[data-testid='canvas-node-text-content']"
+        );
+        const clone = (
+          output ? output.cloneNode(true) : element.cloneNode(true)
+        ) as Element;
         clone
-          .querySelectorAll("button, [role=button], script, style")
+          .querySelectorAll(
+            "button, [role=button], script, style, " +
+              "[data-testid='canvas-node-generation-input-bar'], " +
+              "[data-testid='canvas-node-title'], input, textarea, " +
+              "[contenteditable=true]"
+          )
           .forEach((control) => control.remove());
         return inferPromptFromNodeText(textOf(clone));
       }
@@ -187,6 +197,17 @@ export default defineContentScript({
           }
         }
         return null;
+      }
+
+      function nodeTypeOf(element: Element | null): string | null {
+        if (!element) return null;
+        const nodeId = getNodeId(element);
+        return (
+          element.getAttribute("data-node-type") ||
+          element.getAttribute("data-type") ||
+          inferNodeTypeFromId(nodeId)
+        )
+          ?.toLowerCase() || null;
       }
 
       function findNodeById(nodeId: string | null): Element | null {
@@ -411,12 +432,7 @@ export default defineContentScript({
             : findNodeById(state.activeNodeId);
         const nodeElement = rememberedNode || (field ? nodeFor(field) : null);
         const nodeId = getNodeId(nodeElement) || state.activeNodeId;
-        const nodeType = (
-          nodeElement?.getAttribute("data-node-type") ||
-          nodeElement?.getAttribute("data-type") ||
-          inferNodeTypeFromId(nodeId) ||
-          ""
-        ).toLowerCase() || null;
+        const nodeType = nodeTypeOf(nodeElement);
         const currentNodeText = nodeTextOf(nodeElement);
         const fieldPrompt = inferPromptFromNodeText(textOf(field));
         const currentPrompt =
@@ -454,11 +470,12 @@ export default defineContentScript({
           });
         }
         for (const connectedNode of connectedNodes) {
+          if (nodeTypeOf(connectedNode) !== "text") continue;
           const connectedText = nodeTextOf(connectedNode);
           if (!connectedText) continue;
           addText(connectedText, {
             nodeId: getNodeId(connectedNode),
-            nodeType: inferNodeTypeFromId(getNodeId(connectedNode)),
+            nodeType: nodeTypeOf(connectedNode),
             role: "upstream-node"
           });
         }
@@ -470,6 +487,7 @@ export default defineContentScript({
           ""
         ).slice(0, MAX_REVIEW_PROMPT_CHARS);
         const upstreamTexts = connectedNodes
+          .filter((connectedNode) => nodeTypeOf(connectedNode) === "text")
           .map((connectedNode) => nodeTextOf(connectedNode))
           .filter(Boolean);
 

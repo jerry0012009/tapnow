@@ -343,6 +343,38 @@ test("retries an ACU bad response body before falling back", async () => {
   }
 });
 
+test("retries a transient browser network failure", async () => {
+  let calls = 0;
+  const result = JSON.stringify({
+    decision: "allow",
+    summary: "网络重试后成功。",
+    issues: [],
+    suggestions: []
+  });
+  const fetchImpl: typeof fetch = async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("Failed to fetch");
+    return new Response(JSON.stringify({ output_text: result }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+
+  const reviewed = await reviewWithLlm(
+    { prompt: "网络重试测试" },
+    {
+      apiKey: "test-key",
+      includeImages: false,
+      protocol: "responses",
+      model: "test-model",
+      baseUrl: "https://api.acucompute.com/v1"
+    },
+    { fetchImpl, retryDelayMs: 0 }
+  );
+  assert.equal(reviewed.summary, "网络重试后成功。");
+  assert.equal(calls, 2);
+});
+
 test("runs the complete Responses and Chat Completions HTTP flows", async () => {
   const requests: Array<{ url: string; body: any; authorization: string }> = [];
   const server = http.createServer(async (request, response) => {
