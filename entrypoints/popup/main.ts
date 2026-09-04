@@ -4,6 +4,12 @@ import {
   normalizeSettings,
   type ReviewSettings
 } from "../../utils/reviewer";
+import {
+  ACU_CONTEXT_WINDOW_TOKENS,
+  MAX_LLM_PROMPT_LENGTH,
+  MAX_REVIEW_REQUEST_BYTES,
+  MAX_REVIEW_TEXT_CHARS
+} from "../../utils/limits";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
@@ -33,8 +39,9 @@ app.innerHTML = `
       <div class="row"><input id="llmEnabled" type="checkbox"><label for="llmEnabled">启用 LLM 审阅</label></div>
       <div class="row"><input id="llmIncludeImages" type="checkbox"><label for="llmIncludeImages">检测时发送图片素材</label></div>
     <label for="llmPrompt">LLM 审阅提示词</label>
-    <textarea id="llmPrompt" maxlength="2000" placeholder="用于指导模型审阅当前节点，只输出 JSON 结果。"></textarea>
-    <div class="hint">检测时作为 system/instructions 发送，最多 2000 字符。</div>
+    <textarea id="llmPrompt" maxlength="${MAX_LLM_PROMPT_LENGTH}" placeholder="用于指导模型审阅当前节点，只输出 JSON 结果。"></textarea>
+    <div class="hint">检测时作为 system/instructions 发送，最多 ${MAX_LLM_PROMPT_LENGTH.toLocaleString()} 字符。</div>
+    <div class="hint">ACU gpt-5.6 目录标注 ${ACU_CONTEXT_WINDOW_TOKENS.toLocaleString()} tokens；节点文字总预算 ${MAX_REVIEW_TEXT_CHARS.toLocaleString()} 字符，请求体预算 ${(MAX_REVIEW_REQUEST_BYTES / 1_000_000).toFixed(0)} MB。</div>
     <label for="llmProtocol">接口协议</label>
     <select id="llmProtocol">
       <option value="responses">Responses</option>

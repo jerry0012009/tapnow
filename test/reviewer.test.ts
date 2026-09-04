@@ -6,6 +6,7 @@ import {
   normalizeSettings,
   reviewDraft
 } from "../utils/reviewer";
+import { MAX_LLM_PROMPT_LENGTH } from "../utils/limits";
 
 test("infers the node type from TapNow's real node id", () => {
   assert.equal(
@@ -19,7 +20,10 @@ test("keeps a custom LLM prompt bounded and restores the default when absent", (
   const custom = normalizeSettings({ llmPrompt: "检查提示词" });
   assert.equal(custom.llmPrompt, "检查提示词");
   assert.equal(normalizeSettings().llmPrompt.length > 0, true);
-  assert.equal(normalizeSettings({ llmPrompt: "x".repeat(3000) }).llmPrompt.length, 2000);
+  assert.equal(
+    normalizeSettings({ llmPrompt: "x".repeat(MAX_LLM_PROMPT_LENGTH + 100) }).llmPrompt.length,
+    MAX_LLM_PROMPT_LENGTH
+  );
 });
 
 test("recovers prompt text rendered by a non-editing Text node", () => {

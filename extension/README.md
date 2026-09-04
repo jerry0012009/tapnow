@@ -16,7 +16,7 @@ npm run extension:build
 `.output/chrome-mv3/`。
 
 普通试用用户不需要构建源码，直接使用
-`releases/tapnow-companion-0.1.5-chrome.zip`，解压后在
+`releases/tapnow-companion-0.1.6-chrome.zip`，解压后在
 `chrome://extensions` 中选择“加载已解压的扩展程序”。完整步骤见
 `releases/README.md`。
 
@@ -28,7 +28,8 @@ npm run extension:build
 - 点击“检测”后执行少量本地规则：空提示词、团队禁用词；团队要求词只产生提醒。
 - 可选地把当前节点草稿发送给 OpenAI 的 Responses 或 Chat Completions 接口。
 - 可选地把当前节点中的图片转换为 data URL 后随检测请求发送；跨域媒体由扩展后台按
-  TapNow 媒体域名和主站 Referer 规则抓取。
+  TapNow 媒体域名和主站 Referer 规则抓取。图片不再按 4 张硬截断，而按总请求预算
+  选择，超出预算的图片会显示为未发送。
 - 以配置页中的可编辑短提示词请求 JSON 结构化审阅结果。
 - 面板的“开发者信息”和 Console 会显示当前 focus、节点类型、输入、图片准备状态、
   LLM 协议/模型和结果摘要，不包含 API Key 或图片 data URL。
@@ -61,6 +62,19 @@ Chrome 账号。
   "image_materials": []
 }
 ```
+
+容量策略：
+
+- ACU 模型目录标注的上下文窗口：272,000 tokens。
+- 节点文字总预算：约 200,000 字符；单个输入字段最多约 120,000 字符。
+- LLM 审阅提示词最多 20,000 字符。
+- 图片素材最多收集 32 项；实际发送按 20,000,000 个 data URL 字符总预算，
+  单图原始数据超过 8 MB 会先尝试压缩。
+- 整体 JSON 请求体最多约 28 MB，为 ACU Router 默认 32 MB 解压后限制预留余量。
+
+这些是发送前的客户端预算，不代表所有上游模型都接受同样的图片分辨率或图片
+token 数。面板开发者信息会显示文字实际纳入量、准备图片数、实际发送图片数、
+图片字节数和请求体大小。
 
 固定审阅要求在 `utils/llm.ts` 中维护，模型必须返回：
 

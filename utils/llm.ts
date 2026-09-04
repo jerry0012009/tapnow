@@ -3,10 +3,20 @@ import type {
   ReviewDraft,
   ReviewIssue
 } from "./reviewer";
+import { DEFAULT_LLM_PROMPT } from "./reviewer";
 import {
-  DEFAULT_LLM_PROMPT,
-  MAX_LLM_PROMPT_LENGTH
-} from "./reviewer";
+  MAX_REVIEW_IMAGE_MATERIALS,
+  MAX_REVIEW_PROMPT_CHARS,
+  MAX_REVIEW_REQUEST_BYTES,
+  MAX_REVIEW_TEXT_CHARS,
+  MAX_REVIEW_TEXT_MATERIAL_CHARS,
+  MAX_REVIEW_TEXT_MATERIAL_ITEM_CHARS,
+  MAX_REVIEW_TEXT_MATERIALS,
+  MAX_REVIEW_UPSTREAM_CHARS,
+  MAX_LLM_PROMPT_LENGTH,
+  preparedImageStats,
+  selectPreparedImageUrls
+} from "./limits";
 
 export interface LlmReview {
   decision: ReviewDecision;
@@ -15,6 +25,9 @@ export interface LlmReview {
   suggestions: string[];
   provider: string;
   model: string;
+  requestStats: ReturnType<typeof reviewPayloadStats> & {
+    requestBytes: number;
+  };
 }
 
 export interface LlmSettings {
@@ -63,14 +76,53 @@ const REVIEW_SCHEMA = {
 } as const;
 
 function compactDraft(draft: ReviewDraft): string {
+  const prompt = String(draft.prompt ?? "").slice(
+    0,
+    MAX_REVIEW_PROMPT_CHARS
+  );
+  const upstreamBudget = Math.max(
+    0,
+    Math.min(
+      MAX_REVIEW_UPSTREAM_CHARS,
+      MAX_REVIEW_TEXT_CHARS - prompt.length
+    )
+  );
+  const upstream = String(draft.upstreamSummary ?? "").slice(
+    0,
+    upstreamBudget
+  );
+  let materialBudget = Math.max(
+    0,
+    Math.min(
+      MAX_REVIEW_TEXT_MATERIAL_CHARS,
+      MAX_REVIEW_TEXT_CHARS - prompt.length - upstream.length
+    )
+  );
+  const textMaterials: string[] = [];
+  for (const item of (draft.textMaterials || []).slice(
+    0,
+    MAX_REVIEW_TEXT_MATERIALS
+  )) {
+    if (materialBudget <= 0) break;
+    const text = String(item).slice(
+      0,
+      Math.min(MAX_REVIEW_TEXT_MATERIAL_ITEM_CHARS, materialBudget)
+    );
+    if (!text) continue;
+    textMaterials.push(text);
+    materialBudget -= text.length;
+  }
+
   return JSON.stringify({
     canvas_id: draft.canvasId ?? null,
     node_id: draft.nodeId ?? null,
     node_type: draft.nodeType ?? null,
-    prompt: String(draft.prompt ?? "").slice(0, 4000),
-    upstream_context: String(draft.upstreamSummary ?? "").slice(0, 2000),
-    text_materials: (draft.textMaterials || []).slice(0, 8).map((item) => item.slice(0, 1000)),
-    image_materials: (draft.imageMaterials || []).slice(0, 6).map((item) => ({
+    prompt,
+    upstream_context: upstream,
+    text_materials: textMaterials,
+    image_materials: (draft.imageMaterials || [])
+      .slice(0, MAX_REVIEW_IMAGE_MATERIALS)
+      .map((item) => ({
       url: item.url.slice(0, 2000),
       alt: String(item.alt || "").slice(0, 300),
       width: item.width || null,
@@ -82,10 +134,7 @@ function compactDraft(draft: ReviewDraft): string {
 
 function imageUrls(draft: ReviewDraft, includeImages: boolean): string[] {
   if (!includeImages) return [];
-  return (draft.imageMaterials || [])
-    .map((item) => item.dataUrl)
-    .filter((url): url is string => Boolean(url && /^data:image\//i.test(url)))
-    .slice(0, 4);
+  return selectPreparedImageUrls(draft.imageMaterials);
 }
 
 function userContent(draft: ReviewDraft, includeImages: boolean) {
@@ -304,6 +353,15 @@ export async function reviewWithLlm(
           }
         };
 
+  const requestBytes = new TextEncoder().encode(JSON.stringify(body)).length;
+  if (requestBytes > MAX_REVIEW_REQUEST_BYTES) {
+    throw new Error(
+      `LLM 请求体约 ${(requestBytes / 1_000_000).toFixed(1)} MB，超过插件 ` +
+        `${(MAX_REVIEW_REQUEST_BYTES / 1_000_000).toFixed(0)} MB 安全预算。` +
+        "请减少或压缩图片素材后重试。"
+    );
+  }
+
   const endpoint =
     settings.protocol === "chat_completions"
       ? `${baseUrl}/chat/completions`
@@ -366,7 +424,11 @@ export async function reviewWithLlm(
   return {
     ...parseJson(text),
     provider: "openai",
-    model: settings.model
+    model: settings.model,
+    requestStats: {
+      ...reviewPayloadStats(draft, settings.includeImages),
+      requestBytes
+    }
   };
 }
 
@@ -384,3 +446,43 @@ export const llmInternals = {
   withoutStructuredOutput,
   retryableFailure
 };
+
+export function reviewPayloadStats(
+  draft: ReviewDraft,
+  includeImages: boolean
+) {
+  const compact = compactDraft(draft);
+  const parsed = JSON.parse(compact);
+  const sourceTextChars =
+    String(draft.prompt || "").length +
+    String(draft.upstreamSummary || "").length +
+    (draft.textMaterials || []).reduce(
+      (sum, item) => sum + String(item).length,
+      0
+    );
+  const includedTextChars =
+    String(parsed.prompt || "").length +
+    String(parsed.upstream_context || "").length +
+    (parsed.text_materials || []).reduce(
+      (sum: number, item: unknown) => sum + String(item).length,
+      0
+    );
+  const images = includeImages
+    ? preparedImageStats(draft.imageMaterials)
+    : {
+        preparedCount: 0,
+        sentCount: 0,
+        omittedCount: 0,
+        sentDataUrlChars: 0,
+        sentImageBytes: 0,
+        budgetChars: 0
+      };
+  return {
+    compactTextChars: compact.length,
+    sourceTextChars,
+    includedTextChars,
+    omittedTextChars: Math.max(0, sourceTextChars - includedTextChars),
+    textBudgetChars: MAX_REVIEW_TEXT_CHARS,
+    ...images
+  };
+}

@@ -1,3 +1,5 @@
+import { MAX_LLM_PROMPT_LENGTH } from "./limits";
+
 export type ReviewSeverity = "block" | "warn";
 export type ReviewDecision = "allow" | "warn" | "block";
 
@@ -51,8 +53,6 @@ export const DEFAULT_LLM_PROMPT = [
   "只输出符合 JSON schema 的结果；不要改写原提示词，不要编造未提供的上下文。",
   "decision 只能是 allow、warn、block；普通质量问题用 warn，明显无法运行或违反规则用 block。"
 ].join(" ");
-
-export const MAX_LLM_PROMPT_LENGTH = 2000;
 
 const DRAG_HELP_TEXT =
   "To pick up a draggable item, press the space bar. While dragging, use the arrow keys to move the item. Press space again to drop the item in its new position, or press escape to cancel.";

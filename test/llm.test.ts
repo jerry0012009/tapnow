@@ -3,17 +3,27 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { llmInternals } from "../utils/llm";
 import { reviewWithLlm } from "../utils/llm";
+import {
+  MAX_IMAGE_DATA_URL_CHARS,
+  MAX_REVIEW_TEXT_CHARS,
+  preparedImageStats
+} from "../utils/limits";
 
 test("builds bounded JSON input for an LLM review", () => {
   const input = llmInternals.compactDraft({
     canvasId: "canvas-1",
     nodeId: "node-1",
-    prompt: "x".repeat(5000),
-    upstreamSummary: "y".repeat(3000)
+    prompt: "x".repeat(150000),
+    upstreamSummary: "y".repeat(50000),
+    textMaterials: ["z".repeat(100000), "w".repeat(100000)]
   });
   const parsed = JSON.parse(input);
-  assert.equal(parsed.prompt.length, 4000);
-  assert.equal(parsed.upstream_context.length, 2000);
+  assert.equal(parsed.prompt.length, 120000);
+  assert.equal(parsed.upstream_context.length, 40000);
+  assert.equal(
+    parsed.text_materials.reduce((sum: number, value: string) => sum + value.length, 0),
+    MAX_REVIEW_TEXT_CHARS - 120000 - 40000
+  );
 });
 
 test("extracts structured text from Responses and Chat Completions", () => {
@@ -84,6 +94,34 @@ test("sends multiple prepared images and skips unprepared images", () => {
     true
   );
   assert.equal(content.filter((part: any) => part.type === "image_url").length, 2);
+});
+
+test("allows more than four small prepared images", () => {
+  const image = (name: string) => ({
+    url: `https://example.com/${name}.png`,
+    dataUrl: "data:image/png;base64,ZmFrZQ=="
+  });
+  const content = llmInternals.userContent(
+    {
+      prompt: "多图审阅",
+      imageMaterials: Array.from({ length: 12 }, (_, index) => image(String(index)))
+    },
+    true
+  );
+  assert.equal(content.filter((part: any) => part.type === "image_url").length, 12);
+});
+
+test("reports prepared images omitted only when the aggregate image budget is exceeded", () => {
+  const oneImage = "data:image/jpeg;base64," + "a".repeat(8_000_000);
+  const stats = preparedImageStats([
+      { url: "https://example.com/one.jpg", dataUrl: oneImage },
+      { url: "https://example.com/two.jpg", dataUrl: oneImage },
+      { url: "https://example.com/three.jpg", dataUrl: oneImage }
+  ]);
+  assert.equal(stats.preparedCount, 3);
+  assert.equal(stats.sentCount, 2);
+  assert.equal(stats.omittedCount, 1);
+  assert.equal(stats.budgetChars, MAX_IMAGE_DATA_URL_CHARS);
 });
 
 test("uses a configured review prompt in the request", async () => {

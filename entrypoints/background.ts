@@ -2,6 +2,7 @@ import { browser } from "wxt/browser";
 import { defineBackground } from "wxt/utils/define-background";
 import { DEFAULT_SETTINGS, normalizeSettings } from "../utils/reviewer";
 import { reviewWithLlm } from "../utils/llm";
+import { MAX_SINGLE_IMAGE_BYTES } from "../utils/limits";
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -42,7 +43,7 @@ async function compressImage(
         type: "image/jpeg",
         quality
       });
-      if (output.size <= 4_000_000) {
+      if (output.size <= MAX_SINGLE_IMAGE_BYTES) {
         return new Uint8Array(await output.arrayBuffer());
       }
     }
@@ -77,10 +78,13 @@ export default defineBackground(() => {
           return { ok: false, error: "媒体响应不是图片。" };
         }
         const bytes = new Uint8Array(await response.arrayBuffer());
-        if (bytes.length > 4_000_000) {
+        if (bytes.length > MAX_SINGLE_IMAGE_BYTES) {
           const compressed = await compressImage(bytes, contentType);
           if (!compressed) {
-            return { ok: false, error: "原图超过 4 MB，压缩后仍无法控制在发送上限内。" };
+            return {
+              ok: false,
+              error: `原图超过 ${MAX_SINGLE_IMAGE_BYTES / 1_000_000} MB，压缩后仍无法控制在发送上限内。`
+            };
           }
           return {
             ok: true,

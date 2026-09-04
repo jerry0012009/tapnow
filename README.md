@@ -108,12 +108,20 @@ npm run extension:dev
 - 本地团队要求词和禁用词
 - 是否启用副驾驶
 - 是否启用 LLM 审阅
-- 是否把图片素材发送给 LLM（只发送本地已准备的图片，最多 4 张）
-- LLM 审阅提示词（可编辑，最多 2000 字符）
+- 是否把图片素材发送给 LLM（按总请求预算发送，不再硬限制 4 张）
+- LLM 审阅提示词（可编辑，最多 20,000 字符）
 - `responses` 或 `chat_completions` 协议
 - 模型、API Base URL 和 API Key
 
-图片会先在浏览器本地读取；超过 4 MB 的图片会尝试缩放压缩到发送上限，失败时只保留元数据并在面板中显示原因。
+图片会先在浏览器本地读取；单图超过 8 MB 会尝试缩放压缩。发送时按
+ACU Router 默认 32 MB 请求体留出余量：图片 data URL 总预算为 20 MB，
+整体请求体安全预算为 28 MB。小图可以同时发送多张，超出预算的图片会在
+开发者信息中标明，不会静默伪装成已发送。
+
+ACU 随附的模型目录将 `acu-auto`、`gpt-5.6-luna`、`gpt-5.6-terra` 和
+`gpt-5.6-sol` 标为 272,000 tokens 上下文窗口。插件按约 200,000 字符
+保守收集节点提示词、上下文和文字素材，为图片 token、结构化 schema 和输出
+留出空间；这不是把字符数直接等同于 token 数。
 
 0.1 支持 `https://api.openai.com` 和 `https://api.acucompute.com`，API Key 存在扩展的本机
 `storage.local`，不会写入仓库或同步到 Chrome 账号。正式团队版建议改为自有

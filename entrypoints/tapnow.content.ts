@@ -9,6 +9,15 @@ import {
   type ReviewDraft,
   type ReviewSettings
 } from "../utils/reviewer";
+import { reviewPayloadStats } from "../utils/llm";
+import {
+  MAX_REVIEW_IMAGE_MATERIALS,
+  MAX_REVIEW_PROMPT_CHARS,
+  MAX_REVIEW_TEXT_MATERIAL_ITEM_CHARS,
+  MAX_REVIEW_TEXT_MATERIALS,
+  MAX_REVIEW_UPSTREAM_CHARS,
+  MAX_SINGLE_IMAGE_BYTES
+} from "../utils/limits";
 
 interface LlmResponse {
   ok: boolean;
@@ -19,6 +28,9 @@ interface LlmResponse {
     issues: LocalReview["issues"];
     suggestions: string[];
     model: string;
+    requestStats?: ReturnType<typeof reviewPayloadStats> & {
+      requestBytes: number;
+    };
   };
 }
 
@@ -202,7 +214,7 @@ export default defineContentScript({
             const output = await new Promise<Blob | null>((resolve) =>
               canvas.toBlob(resolve, "image/jpeg", quality)
             );
-            if (output && output.size <= 4_000_000) {
+            if (output && output.size <= MAX_SINGLE_IMAGE_BYTES) {
               return await blobToDataUrl(output);
             }
           }
@@ -239,12 +251,14 @@ export default defineContentScript({
           const response = await fetch(source, { credentials: "include" });
           if (response.ok) {
             const blob = await response.blob();
-            if (blob.size <= 4_000_000) {
+            if (blob.size <= MAX_SINGLE_IMAGE_BYTES) {
               return { dataUrl: await blobToDataUrl(blob) };
             }
             const compressed = await compressBlob(blob);
             if (compressed) return { dataUrl: compressed };
-            return { error: "原图超过 4 MB，压缩后仍无法控制在发送上限内。" };
+            return {
+              error: `原图超过 ${MAX_SINGLE_IMAGE_BYTES / 1_000_000} MB，压缩后仍无法控制在发送上限内。`
+            };
           }
         } catch {
           // The extension fetch below handles media hosts that reject page CORS.
@@ -295,7 +309,10 @@ export default defineContentScript({
               ? nodeFor(field)
               : null;
         const nodeText = nodeTextOf(nodeElement);
-        const prompt = textOf(field) || nodeText;
+        const prompt = (textOf(field) || nodeText).slice(
+          0,
+          MAX_REVIEW_PROMPT_CHARS
+        );
         const textMaterials = nodeElement
           ? [...nodeElement.querySelectorAll(
               "textarea, input:not([type=hidden]), [contenteditable=true]"
@@ -303,10 +320,12 @@ export default defineContentScript({
               .filter(visible)
               .map(textOf)
               .filter(Boolean)
-              .slice(0, 8)
-              .map((value) => value.slice(0, 1000))
+              .slice(0, MAX_REVIEW_TEXT_MATERIALS)
+              .map((value) =>
+                value.slice(0, MAX_REVIEW_TEXT_MATERIAL_ITEM_CHARS)
+              )
           : prompt
-            ? [prompt.slice(0, 1000)]
+            ? [prompt.slice(0, MAX_REVIEW_TEXT_MATERIAL_ITEM_CHARS)]
             : [];
         const imageElements = nodeElement
           ? [...nodeElement.querySelectorAll("img")]
@@ -314,7 +333,7 @@ export default defineContentScript({
               .filter(
                 (image) => image.naturalWidth >= 64 && image.naturalHeight >= 64
               )
-              .slice(0, 6)
+              .slice(0, MAX_REVIEW_IMAGE_MATERIALS)
           : [];
         const imageMaterials: NonNullable<ReviewDraft["imageMaterials"]> = [];
         for (const image of imageElements) {
@@ -344,7 +363,7 @@ export default defineContentScript({
             ""
           ).toLowerCase() || null,
           prompt,
-          upstreamSummary: nodeText.slice(0, 1200),
+          upstreamSummary: nodeText.slice(0, MAX_REVIEW_UPSTREAM_CHARS),
           textMaterials,
           imageMaterials,
           fieldCount: textMaterials.length,
@@ -360,6 +379,11 @@ export default defineContentScript({
           '"': "&quot;",
           "'": "&#39;"
         })[character] as string);
+      }
+
+      function formatBytes(value: number): string {
+        if (value < 1_000_000) return `${(value / 1_000).toFixed(1)} KB`;
+        return `${(value / 1_000_000).toFixed(1)} MB`;
       }
 
       function render(
@@ -392,6 +416,10 @@ export default defineContentScript({
         const imageCount = draft.imageMaterials?.length || 0;
         const uploadable =
           draft.imageMaterials?.filter((image) => image.dataUrl).length || 0;
+        const payloadStats = reviewPayloadStats(
+          draft,
+          state.settings.llmIncludeImages
+        );
         const captureErrors = [
           ...new Set(
             (draft.imageMaterials || [])
@@ -401,12 +429,12 @@ export default defineContentScript({
         ];
         const materialSummary = state.settings.llmIncludeImages
           ? imagePreparationAttempted
-            ? `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 可发送图片 ${Math.min(uploadable, 4)} 项`
+            ? `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 可发送图片 ${payloadStats.sentCount} 项 · ${formatBytes(payloadStats.sentImageBytes)}`
             : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 正在检查图片可发送性`
           : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 图片发送未开启`;
         const imageNotice = state.settings.llmIncludeImages
           ? imagePreparationAttempted
-            ? `${captureErrors.length ? captureErrors.join(" ") + " " : ""}图片仅在本地完成预检；点击“检测”才会发送已准备的图片（最多 4 项）。`
+            ? `${captureErrors.length ? captureErrors.join(" ") + " " : ""}图片仅在本地完成预检；点击“检测”才会按总请求预算发送。${payloadStats.omittedCount ? ` 有 ${payloadStats.omittedCount} 项因预算未发送。` : ""}`
             : "正在本地准备图片；此过程不会调用 LLM。"
           : "点击“检测”才会调用 LLM；当前未开启图片发送，只传图片元数据。";
         const debugInfo = {
@@ -441,9 +469,14 @@ export default defineContentScript({
               state.settings.llmProtocol === "responses"
                 ? `${state.settings.llmBaseUrl}/responses`
                 : `${state.settings.llmBaseUrl}/chat/completions`,
-            preparedImagesSent: state.settings.llmIncludeImages
-              ? Math.min(uploadable, 4)
-              : 0
+            preparedImagesAvailable: uploadable,
+            preparedImagesSent: payloadStats.sentCount,
+            omittedImages: payloadStats.omittedCount,
+            imageBytesSent: payloadStats.sentImageBytes,
+            textCharsSource: payloadStats.sourceTextChars,
+            textCharsIncluded: payloadStats.includedTextChars,
+            textCharsOmitted: payloadStats.omittedTextChars,
+            requestBytes: llm?.requestStats?.requestBytes || null
           },
           llm: llm
             ? {
