@@ -119,24 +119,38 @@ function compactDraft(draft: ReviewDraft): string {
     node_type: draft.nodeType ?? null,
     prompt,
     upstream_context: upstream,
-    text_materials: textMaterials,
+    text_materials: textMaterials.map((text, index) => {
+      const source = draft.textMaterialSources?.[index];
+      return {
+        material_id: `text-${index + 1}`,
+        text,
+        source_node_id: source?.nodeId ?? null,
+        source_node_type: source?.nodeType ?? null,
+        role: source?.role ?? "connected-text"
+      };
+    }),
     image_materials: (draft.imageMaterials || [])
       .slice(0, MAX_REVIEW_IMAGE_MATERIALS)
-      .map((item) => ({
-      url: item.url.slice(0, 2000),
-      alt: String(item.alt || "").slice(0, 300),
-      width: item.width || null,
-      height: item.height || null,
-      uploadable: Boolean(item.dataUrl),
-      compression: item.compression
-        ? {
-            applied: item.compression.applied,
-            method: item.compression.method,
-            original_bytes: item.compression.originalBytes ?? null,
-            prepared_bytes: item.compression.preparedBytes ?? null
-          }
-        : null
-    }))
+      .map((item, index) => ({
+        material_id: item.materialId || `image-${index + 1}`,
+        order: index + 1,
+        url: item.url.slice(0, 2000),
+        alt: String(item.alt || "").slice(0, 300),
+        width: item.width || null,
+        height: item.height || null,
+        source_node_id: item.sourceNodeId ?? null,
+        source_node_type: item.sourceNodeType ?? null,
+        role: item.role ?? "connected-image",
+        uploadable: Boolean(item.dataUrl),
+        compression: item.compression
+          ? {
+              applied: item.compression.applied,
+              method: item.compression.method,
+              original_bytes: item.compression.originalBytes ?? null,
+              prepared_bytes: item.compression.preparedBytes ?? null
+            }
+          : null
+      }))
   });
 }
 
@@ -149,10 +163,13 @@ function userContent(draft: ReviewDraft, includeImages: boolean) {
   const text = compactDraft(draft);
   return [
     { type: "text", text },
-    ...imageUrls(draft, includeImages).map((url) => ({
-      type: "image_url",
-      image_url: { url }
-    }))
+    ...imageUrls(draft, includeImages).flatMap((url, index) => [
+      {
+        type: "text",
+        text: `下面是 image-${index + 1}（对应 image_materials 中的第 ${index + 1} 项，按顺序审阅）：`
+      },
+      { type: "image_url", image_url: { url } }
+    ])
   ];
 }
 
@@ -161,10 +178,13 @@ function responseInput(draft: ReviewDraft, includeImages: boolean) {
     role: "user",
     content: [
       { type: "input_text", text: compactDraft(draft) },
-      ...imageUrls(draft, includeImages).map((url) => ({
-        type: "input_image",
-        image_url: url
-      }))
+      ...imageUrls(draft, includeImages).flatMap((url, index) => [
+        {
+          type: "input_text",
+          text: `下面是 image-${index + 1}（对应 image_materials 中的第 ${index + 1} 项，按顺序审阅）：`
+        },
+        { type: "input_image", image_url: url }
+      ])
     ]
   }];
 }
@@ -472,7 +492,11 @@ export function reviewPayloadStats(
     String(parsed.prompt || "").length +
     String(parsed.upstream_context || "").length +
     (parsed.text_materials || []).reduce(
-      (sum: number, item: unknown) => sum + String(item).length,
+      (sum: number, item: unknown) =>
+        sum +
+        (typeof item === "object" && item
+          ? String((item as { text?: unknown }).text || "").length
+          : String(item).length),
       0
     );
   const images = includeImages

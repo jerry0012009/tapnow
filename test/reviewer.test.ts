@@ -44,6 +44,21 @@ test("recovers the real TapNow English placeholder form", () => {
   );
 });
 
+test("does not treat the image node placeholder as a prompt", () => {
+  assert.equal(
+    inferPromptFromNodeText(
+      "Image图片生成描述任何你想要生成的内容，按@引用素材，/呼出指令5"
+    ),
+    ""
+  );
+  assert.equal(
+    inferPromptFromNodeText(
+      "图片生成Describe anything you want to generate, press@for context"
+    ),
+    ""
+  );
+});
+
 test("removes the real node model badge and trailing controls", () => {
   assert.equal(
     inferPromptFromNodeText(

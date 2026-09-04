@@ -60,6 +60,8 @@ export default defineContentScript({
         dragOriginLeft: number;
         dragOriginTop: number;
         reviewSequence: number;
+        activeNodeId: string | null;
+        lastDraft: ReviewDraft | null;
       } = {
         settings: DEFAULT_SETTINGS,
         activeField: null,
@@ -71,7 +73,9 @@ export default defineContentScript({
         dragStartY: 0,
         dragOriginLeft: 0,
         dragOriginTop: 0,
-        reviewSequence: 0
+        reviewSequence: 0,
+        activeNodeId: null,
+        lastDraft: null
       };
 
       const host = document.createElement("div");
@@ -153,9 +157,10 @@ export default defineContentScript({
           "textarea, input:not([type=hidden]), [contenteditable=true]"
         ) as ActiveField | null;
         state.activeNode = nodeFor(target);
+        state.activeNodeId = getNodeId(state.activeNode);
         console.info("[TapNow Companion] focus", {
-          nodeId: getNodeId(state.activeNode),
-          nodeType: inferNodeTypeFromId(getNodeId(state.activeNode)),
+          nodeId: state.activeNodeId,
+          nodeType: inferNodeTypeFromId(state.activeNodeId),
           fieldTag: state.activeField?.tagName || null
         });
       }
@@ -184,6 +189,44 @@ export default defineContentScript({
         return null;
       }
 
+      function findNodeById(nodeId: string | null): Element | null {
+        if (!nodeId) return null;
+        return [...document.querySelectorAll(".react-flow__node[data-id]")].find(
+          (node) => node.getAttribute("data-id") === nodeId
+        ) || null;
+      }
+
+      function incomingNodeIds(nodeId: string | null): string[] {
+        if (!nodeId) return [];
+        const result: string[] = [];
+        for (const edge of document.querySelectorAll("[aria-label^='Edge from ']")) {
+          const label = edge.getAttribute("aria-label") || "";
+          const match = label.match(/^Edge from (.+) to (.+)$/);
+          if (match?.[2] === nodeId) result.push(match[1]);
+        }
+        return [...new Set(result)];
+      }
+
+      function normalizedImageUrl(value: string): string {
+        try {
+          const parsed = new URL(sourceImageUrl(value));
+          parsed.searchParams.delete("tap_mx");
+          return parsed.toString();
+        } catch {
+          return value;
+        }
+      }
+
+      function sourceImageUrl(value: string): string {
+        try {
+          const parsed = new URL(value);
+          parsed.searchParams.delete("variant_name");
+          return parsed.toString();
+        } catch {
+          return value;
+        }
+      }
+
       function visible(element: Element): boolean {
         const rect = element.getBoundingClientRect();
         const style = getComputedStyle(element);
@@ -205,7 +248,7 @@ export default defineContentScript({
       }
 
       async function captureImage(
-        image: HTMLImageElement
+        image: HTMLImageElement | string
       ): Promise<{
         dataUrl?: string;
         error?: string;
@@ -260,7 +303,8 @@ export default defineContentScript({
           }
         }
 
-        const source = image.currentSrc || image.src;
+        const source =
+          typeof image === "string" ? image : image.currentSrc || image.src;
         try {
           const response = await fetch(source, { credentials: "include" });
           if (response.ok) {
@@ -296,32 +340,34 @@ export default defineContentScript({
           // The extension fetch below handles media hosts that reject page CORS.
         }
         try {
-          const canvas = document.createElement("canvas");
-          const maxDimension = 2048;
-          const scale = Math.min(
-            1,
-            maxDimension / Math.max(image.naturalWidth, image.naturalHeight)
-          );
-          canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-          canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-          canvas.getContext("2d")?.drawImage(
-            image,
-            0,
-            0,
-            canvas.width,
-            canvas.height
-          );
-          const encoded = await encodeCanvas(canvas);
-          if (encoded) {
-            return {
-              dataUrl: encoded.dataUrl,
-              compression: {
-                applied: true,
-                method: "page-canvas-jpeg-2048",
-                originalBytes: null,
-                preparedBytes: encoded.bytes
-              }
-            };
+          if (typeof image !== "string") {
+            const canvas = document.createElement("canvas");
+            const maxDimension = 2048;
+            const scale = Math.min(
+              1,
+              maxDimension / Math.max(image.naturalWidth, image.naturalHeight)
+            );
+            canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+            canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+            canvas.getContext("2d")?.drawImage(
+              image,
+              0,
+              0,
+              canvas.width,
+              canvas.height
+            );
+            const encoded = await encodeCanvas(canvas);
+            if (encoded) {
+              return {
+                dataUrl: encoded.dataUrl,
+                compression: {
+                  applied: true,
+                  method: "page-canvas-jpeg-2048",
+                  originalBytes: null,
+                  preparedBytes: encoded.bytes
+                }
+              };
+            }
           }
         } catch {
           // Fall through to the background fetch.
@@ -354,77 +400,159 @@ export default defineContentScript({
 
       async function getDraft(includeImageData = false): Promise<ReviewDraft> {
         const field =
-          state.activeField && document.contains(state.activeField)
+          state.activeField &&
+          document.contains(state.activeField) &&
+          (!state.activeNode || state.activeNode.contains(state.activeField))
             ? state.activeField
             : null;
-        const nodeElement =
+        const rememberedNode =
           state.activeNode && document.contains(state.activeNode)
             ? state.activeNode
-            : field
-              ? nodeFor(field)
-              : null;
-        const nodeText = nodeTextOf(nodeElement);
-        const prompt = (textOf(field) || nodeText).slice(
-          0,
-          MAX_REVIEW_PROMPT_CHARS
-        );
-        const textMaterials = nodeElement
-          ? [...nodeElement.querySelectorAll(
-              "textarea, input:not([type=hidden]), [contenteditable=true]"
-            )]
-              .filter(visible)
-              .map(textOf)
-              .filter(Boolean)
-              .slice(0, MAX_REVIEW_TEXT_MATERIALS)
-              .map((value) =>
-                value.slice(0, MAX_REVIEW_TEXT_MATERIAL_ITEM_CHARS)
-              )
-          : prompt
-            ? [prompt.slice(0, MAX_REVIEW_TEXT_MATERIAL_ITEM_CHARS)]
-            : [];
-        const imageElements = nodeElement
-          ? [...nodeElement.querySelectorAll("img")]
-              .filter(visible)
-              .filter(
-                (image) => image.naturalWidth >= 64 && image.naturalHeight >= 64
-              )
-              .slice(0, MAX_REVIEW_IMAGE_MATERIALS)
-          : [];
+            : findNodeById(state.activeNodeId);
+        const nodeElement = rememberedNode || (field ? nodeFor(field) : null);
+        const nodeId = getNodeId(nodeElement) || state.activeNodeId;
+        const nodeType = (
+          nodeElement?.getAttribute("data-node-type") ||
+          nodeElement?.getAttribute("data-type") ||
+          inferNodeTypeFromId(nodeId) ||
+          ""
+        ).toLowerCase() || null;
+        const currentNodeText = nodeTextOf(nodeElement);
+        const fieldPrompt = inferPromptFromNodeText(textOf(field));
+        const currentPrompt =
+          nodeType === "text" ? inferPromptFromNodeText(currentNodeText) : "";
+        const connectedNodes = incomingNodeIds(nodeId)
+          .map((sourceId) => findNodeById(sourceId))
+          .filter((node): node is Element => Boolean(node));
+        const textMaterials: string[] = [];
+        const textMaterialSources: NonNullable<
+          ReviewDraft["textMaterialSources"]
+        > = [];
+        const addText = (
+          value: string,
+          source: { nodeId?: string | null; nodeType?: string | null; role?: string }
+        ) => {
+          const text = value.slice(0, MAX_REVIEW_TEXT_MATERIAL_ITEM_CHARS);
+          if (!text || textMaterials.includes(text)) return;
+          if (textMaterials.length >= MAX_REVIEW_TEXT_MATERIALS) return;
+          textMaterials.push(text);
+          textMaterialSources.push(source);
+        };
+
+        if (fieldPrompt) {
+          addText(fieldPrompt, {
+            nodeId,
+            nodeType,
+            role: "focused-node-input"
+          });
+        }
+        if (currentPrompt && currentPrompt !== fieldPrompt) {
+          addText(currentPrompt, {
+            nodeId,
+            nodeType,
+            role: "focused-node-text"
+          });
+        }
+        for (const connectedNode of connectedNodes) {
+          const connectedText = nodeTextOf(connectedNode);
+          if (!connectedText) continue;
+          addText(connectedText, {
+            nodeId: getNodeId(connectedNode),
+            nodeType: inferNodeTypeFromId(getNodeId(connectedNode)),
+            role: "upstream-node"
+          });
+        }
+
+        const prompt = (
+          fieldPrompt ||
+          (nodeType === "text" ? currentPrompt : "") ||
+          textMaterials[0] ||
+          ""
+        ).slice(0, MAX_REVIEW_PROMPT_CHARS);
+        const upstreamTexts = connectedNodes
+          .map((connectedNode) => nodeTextOf(connectedNode))
+          .filter(Boolean);
+
+        const imageSources = [
+          ...(nodeElement ? [{ node: nodeElement, role: "focused-node" }] : []),
+          ...connectedNodes.map((node) => ({ node, role: "upstream-node" }))
+        ];
         const imageMaterials: NonNullable<ReviewDraft["imageMaterials"]> = [];
-        for (const image of imageElements) {
-          const material: NonNullable<ReviewDraft["imageMaterials"]>[number] = {
-            url: (image.currentSrc || image.src).slice(0, 2000),
-            alt: (image.alt || "").slice(0, 300),
-            width:
-              image.naturalWidth || Math.round(image.getBoundingClientRect().width),
-            height:
-              image.naturalHeight || Math.round(image.getBoundingClientRect().height)
-          };
-          if (includeImageData) {
-            const captured = await captureImage(image);
-            material.dataUrl = captured.dataUrl;
-            material.captureError = captured.error;
-            material.compression = captured.compression;
+        const seenImages = new Set<string>();
+        for (const { node, role } of imageSources) {
+          const sourceNodeId = getNodeId(node);
+          const sourceNodeType = inferNodeTypeFromId(sourceNodeId);
+          const imageElements = [...node.querySelectorAll("img")]
+            .filter(visible)
+            .filter(
+              (image) => image.naturalWidth >= 64 && image.naturalHeight >= 64
+            );
+          for (const image of imageElements) {
+            if (imageMaterials.length >= MAX_REVIEW_IMAGE_MATERIALS) break;
+            const url = sourceImageUrl(
+              (image.currentSrc || image.src).slice(0, 2000)
+            );
+            const imageKey = normalizedImageUrl(url);
+            if (!url || seenImages.has(imageKey)) continue;
+            seenImages.add(imageKey);
+            const material: NonNullable<ReviewDraft["imageMaterials"]>[number] = {
+              materialId: `image-${imageMaterials.length + 1}`,
+              url,
+              alt: (image.alt || "").slice(0, 300),
+              width:
+                image.naturalWidth ||
+                Math.round(image.getBoundingClientRect().width),
+              height:
+                image.naturalHeight ||
+                Math.round(image.getBoundingClientRect().height),
+              sourceNodeId,
+              sourceNodeType,
+              role:
+                image.alt === "referenceImage"
+                  ? `${role}-reference`
+                  : `${role}-output`
+            };
+            if (includeImageData) {
+              const captured = await captureImage(url);
+              material.dataUrl = captured.dataUrl;
+              material.captureError = captured.error;
+              material.compression = captured.compression;
+            }
+            imageMaterials.push(material);
           }
-          imageMaterials.push(material);
         }
 
         return {
           canvasId: location.pathname.split("/").filter(Boolean).pop() || null,
-          nodeId: getNodeId(nodeElement),
-          nodeType: (
-            nodeElement?.getAttribute("data-node-type") ||
-            nodeElement?.getAttribute("data-type") ||
-            inferNodeTypeFromId(getNodeId(nodeElement)) ||
-            ""
-          ).toLowerCase() || null,
+          nodeId,
+          nodeType,
           prompt,
-          upstreamSummary: nodeText.slice(0, MAX_REVIEW_UPSTREAM_CHARS),
+          upstreamSummary: upstreamTexts
+            .join("\n\n")
+            .slice(0, MAX_REVIEW_UPSTREAM_CHARS),
           textMaterials,
+          textMaterialSources,
           imageMaterials,
           fieldCount: textMaterials.length,
           source: "focused-page-node"
         };
+      }
+
+      async function prepareDraftImages(
+        draft: ReviewDraft
+      ): Promise<ReviewDraft> {
+        if (!draft.imageMaterials?.length) return draft;
+        const imageMaterials = [];
+        for (const image of draft.imageMaterials) {
+          const captured = await captureImage(image.url);
+          imageMaterials.push({
+            ...image,
+            dataUrl: captured.dataUrl,
+            captureError: captured.error,
+            compression: captured.compression
+          });
+        }
+        return { ...draft, imageMaterials };
       }
 
       function escapeHtml(value: unknown): string {
@@ -501,11 +629,16 @@ export default defineContentScript({
           prompt: draft.prompt || "",
           upstreamSummary: draft.upstreamSummary || "",
           textMaterials: draft.textMaterials || [],
+          textMaterialSources: draft.textMaterialSources || [],
           images: (draft.imageMaterials || []).map((image) => ({
+            materialId: image.materialId || null,
             url: image.url,
             alt: image.alt || "",
             width: image.width || null,
             height: image.height || null,
+            sourceNodeId: image.sourceNodeId || null,
+            sourceNodeType: image.sourceNodeType || null,
+            role: image.role || null,
             prepared: Boolean(image.dataUrl),
             preparedBytes: image.dataUrl
               ? Math.round((image.dataUrl.length * 3) / 4)
@@ -615,6 +748,7 @@ export default defineContentScript({
 
       async function openPanel() {
         const draft = await getDraft(false);
+        state.lastDraft = draft;
         console.info("[TapNow Companion] local draft", {
           ...draft,
           imageMaterials: (draft.imageMaterials || []).map((image) => ({
@@ -629,11 +763,12 @@ export default defineContentScript({
           state.settings.llmIncludeImages &&
           (draft.imageMaterials?.length || 0) > 0
         ) {
-          const preparedDraft = await getDraft(true);
+          const preparedDraft = await prepareDraftImages(draft);
           if (
             sequence === state.reviewSequence &&
             !panel.classList.contains("hidden")
           ) {
+            state.lastDraft = preparedDraft;
             render(
               preparedDraft,
               reviewDraft(preparedDraft, state.settings),
@@ -649,7 +784,11 @@ export default defineContentScript({
         detectButton.disabled = true;
         const sequence = ++state.reviewSequence;
         const prepareImages = state.settings.llmIncludeImages;
-        const draft = await getDraft(prepareImages);
+        const baseDraft = state.lastDraft || (await getDraft(false));
+        const draft = prepareImages
+          ? await prepareDraftImages(baseDraft)
+          : baseDraft;
+        state.lastDraft = draft;
         const local = reviewDraft(draft, state.settings);
         console.info("[TapNow Companion] detect request", {
           draft: {

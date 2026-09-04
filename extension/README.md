@@ -16,7 +16,7 @@ npm run extension:build
 `.output/chrome-mv3/`。
 
 普通试用用户不需要构建源码，直接使用
-`releases/tapnow-companion-0.1.7-chrome.zip`，解压后在
+`releases/tapnow-companion-0.1.8-chrome.zip`，解压后在
 `chrome://extensions` 中选择“加载已解压的扩展程序”。完整步骤见
 `releases/README.md`。
 
@@ -31,6 +31,11 @@ npm run extension:build
   TapNow 媒体域名和主站 Referer 规则抓取。图片不再按 4 张硬截断，而按总请求预算
   选择，超出预算的图片会显示为未发送。
 - 以配置页中的可编辑短提示词请求 JSON 结构化审阅结果。
+- 读取焦点节点的直接入边文字和图片素材；检测期间使用稳定快照，不因 TapNow
+  重渲染丢失节点或素材。
+- 为每张图片发送明确的 `image-1`、`image-2` 编号，并区分节点输出图与参考图。
+- 页面显示的 `small/thumbnail` 变体会还原为原始媒体地址后再准备和发送，减少视觉
+  审阅因缩略图造成的精度损失。
 - 面板的“开发者信息”和 Console 会显示当前 focus、节点类型、输入、图片准备状态、
   LLM 协议/模型和结果摘要，不包含 API Key 或图片 data URL；每张已准备图片还会记录
   是否压缩、压缩方式、原始字节数、发送字节数和压缩比例。

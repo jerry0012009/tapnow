@@ -21,7 +21,10 @@ test("builds bounded JSON input for an LLM review", () => {
   assert.equal(parsed.prompt.length, 120000);
   assert.equal(parsed.upstream_context.length, 40000);
   assert.equal(
-    parsed.text_materials.reduce((sum: number, value: string) => sum + value.length, 0),
+    parsed.text_materials.reduce(
+      (sum: number, value: { text: string }) => sum + value.text.length,
+      0
+    ),
     MAX_REVIEW_TEXT_CHARS - 120000 - 40000
   );
 });
@@ -71,11 +74,12 @@ test("includes captured data URLs in multimodal request content", () => {
       { url: "https://example.com/not-prepared.png" }
     ]
   };
-  assert.deepEqual(llmInternals.userContent(draft, true)[1], {
+  assert.deepEqual(llmInternals.userContent(draft, true)[2], {
     type: "image_url",
     image_url: { url: dataUrl }
   });
-  assert.deepEqual(llmInternals.responseInput(draft, true)[0].content[1], {
+  assert.match(llmInternals.userContent(draft, true)[1].text, /image-1/);
+  assert.deepEqual(llmInternals.responseInput(draft, true)[0].content[2], {
     type: "input_image",
     image_url: dataUrl
   });
@@ -88,10 +92,18 @@ test("preserves image compression metadata in the review payload", () => {
   const parsed = JSON.parse(
     llmInternals.compactDraft({
       prompt: "审阅图片",
+      textMaterials: ["上游提示词"],
+      textMaterialSources: [
+        { nodeId: "text-source", nodeType: "text", role: "upstream-node" }
+      ],
       imageMaterials: [
         {
+          materialId: "image-1",
           url: "https://example.com/compressed.jpg",
           dataUrl: "data:image/jpeg;base64,ZmFrZQ==",
+          sourceNodeId: "image-source",
+          sourceNodeType: "image",
+          role: "upstream-node",
           compression: {
             applied: true,
             method: "page-canvas-jpeg-2048",
@@ -102,6 +114,15 @@ test("preserves image compression metadata in the review payload", () => {
       ]
     })
   );
+  assert.deepEqual(parsed.text_materials[0], {
+    material_id: "text-1",
+    text: "上游提示词",
+    source_node_id: "text-source",
+    source_node_type: "text",
+    role: "upstream-node"
+  });
+  assert.equal(parsed.image_materials[0].material_id, "image-1");
+  assert.equal(parsed.image_materials[0].source_node_id, "image-source");
   assert.deepEqual(parsed.image_materials[0].compression, {
     applied: true,
     method: "page-canvas-jpeg-2048",
@@ -252,7 +273,7 @@ test("retries without structured output when a provider rejects the format", asy
     assert.equal(requests.length, 2);
     assert.equal(requests[0].response_format.type, "json_schema");
     assert.equal(requests[1].response_format, undefined);
-    assert.deepEqual(requests[1].messages[1].content[1], {
+    assert.deepEqual(requests[1].messages[1].content[2], {
       type: "image_url",
       image_url: { url: dataUrl }
     });

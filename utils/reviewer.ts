@@ -17,11 +17,20 @@ export interface ReviewDraft {
   prompt?: string;
   upstreamSummary?: string;
   textMaterials?: string[];
+  textMaterialSources?: Array<{
+    nodeId?: string | null;
+    nodeType?: string | null;
+    role?: string;
+  }>;
   imageMaterials?: Array<{
+    materialId?: string;
     url: string;
     alt?: string;
     width?: number;
     height?: number;
+    sourceNodeId?: string | null;
+    sourceNodeType?: string | null;
+    role?: string;
     dataUrl?: string;
     captureError?: string;
     compression?: {
@@ -56,6 +65,7 @@ export interface ReviewSettings {
 
 export const DEFAULT_LLM_PROMPT = [
   "审阅一个创作节点，帮助用户在运行前发现质量、上下文和团队风格问题。",
+  "用户消息中的 image-1、image-2 等文字标记紧跟对应图片，必须按编号引用图片，不要混淆素材。",
   "只输出符合 JSON schema 的结果；不要改写原提示词，不要编造未提供的上下文。",
   "decision 只能是 allow、warn、block；普通质量问题用 warn，明显无法运行或违反规则用 block。"
 ].join(" ");
@@ -68,16 +78,29 @@ export function inferPromptFromNodeText(value: unknown): string {
     .replace(/\s+/g, " ")
     .trim();
   text = text.replace(DRAG_HELP_TEXT, " ");
+  text = text.replace(
+    /描述任何你想要生成的内容，按@引用素材，\/呼出指令(?:\d+)?/g,
+    " "
+  );
+  text = text.replace(
+    /Describe anything you want to generate,? use @ to reference materials,? and? \/? to invoke commands?\d*/gi,
+    " "
+  );
+  text = text.replace(
+    /Describe anything you want to generate,\s*press\s*@\s*for context/gi,
+    " "
+  );
   text = text.replace(/双击开始编辑(?:\.\.\.|…)?/g, " ");
   text = text.replace(/Double-click to (?:start )?edit(?:ing)?(?:\.\.\.|…)?/gi, " ");
-  text = text.replace(/^(?:Text|Image|Video|Audio)(?:\s*Pin)?/i, " ");
-  text = text.replace(/^Pin\b/i, " ");
+  text = text.replace(/^\s*(?:Text|Image|Video|Audio)(?:\s*Pin)?/i, " ");
+  text = text.replace(/^\s*(?:图片生成|图像生成|Image generation)\s*/i, " ");
+  text = text.replace(/^\s*Pin\b/i, " ");
   text = text.replace(
     /(?:Gemini|GPT|Claude|Flux|Midjourney|DALL[·\s-]?E|Stable Diffusion)\b.*$/i,
     " "
   );
   text = text.replace(/\s+\d+\s*[×x]\s*\d+\s*$/i, " ");
-  text = text.replace(/1\s*$/i, " ");
+  text = text.replace(/\s*\d+\s*$/i, " ");
   text = text.replace(/\s+(?:-\s*){1,3}$/i, " ");
   text = text.replace(/-{1,3}\s*$/i, " ");
   return text.replace(/\s+/g, " ").trim();
