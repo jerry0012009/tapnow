@@ -108,9 +108,12 @@ npm run extension:dev
 - 本地团队要求词和禁用词
 - 是否启用副驾驶
 - 是否启用 LLM 审阅
-- 是否把图片素材发送给 LLM
+- 是否把图片素材发送给 LLM（只发送本地已准备的图片，最多 4 张）
+- LLM 审阅提示词（可编辑，最多 2000 字符）
 - `responses` 或 `chat_completions` 协议
 - 模型、API Base URL 和 API Key
+
+图片会先在浏览器本地读取；超过 4 MB 的图片会尝试缩放压缩到发送上限，失败时只保留元数据并在面板中显示原因。
 
 0.1 支持 `https://api.openai.com` 和 `https://api.acucompute.com`，API Key 存在扩展的本机
 `storage.local`，不会写入仓库或同步到 Chrome 账号。正式团队版建议改为自有

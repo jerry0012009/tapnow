@@ -1,6 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { inferPromptFromNodeText, reviewDraft } from "../utils/reviewer";
+import {
+  inferNodeTypeFromId,
+  inferPromptFromNodeText,
+  normalizeSettings,
+  reviewDraft
+} from "../utils/reviewer";
+
+test("infers the node type from TapNow's real node id", () => {
+  assert.equal(
+    inferNodeTypeFromId("text-ab4e1f84-7a43-4e82-9093-f4205deb8825"),
+    "text"
+  );
+  assert.equal(inferNodeTypeFromId(""), null);
+});
+
+test("keeps a custom LLM prompt bounded and restores the default when absent", () => {
+  const custom = normalizeSettings({ llmPrompt: "检查提示词" });
+  assert.equal(custom.llmPrompt, "检查提示词");
+  assert.equal(normalizeSettings().llmPrompt.length > 0, true);
+  assert.equal(normalizeSettings({ llmPrompt: "x".repeat(3000) }).llmPrompt.length, 2000);
+});
 
 test("recovers prompt text rendered by a non-editing Text node", () => {
   const rendered =

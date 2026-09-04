@@ -16,7 +16,7 @@ npm run extension:build
 `.output/chrome-mv3/`。
 
 普通试用用户不需要构建源码，直接使用
-`releases/tapnow-companion-0.1.4-chrome.zip`，解压后在
+`releases/tapnow-companion-0.1.5-chrome.zip`，解压后在
 `chrome://extensions` 中选择“加载已解压的扩展程序”。完整步骤见
 `releases/README.md`。
 
@@ -29,7 +29,9 @@ npm run extension:build
 - 可选地把当前节点草稿发送给 OpenAI 的 Responses 或 Chat Completions 接口。
 - 可选地把当前节点中的图片转换为 data URL 后随检测请求发送；跨域媒体由扩展后台按
   TapNow 媒体域名和主站 Referer 规则抓取。
-- 以固定短提示词请求 JSON 结构化审阅结果。
+- 以配置页中的可编辑短提示词请求 JSON 结构化审阅结果。
+- 面板的“开发者信息”和 Console 会显示当前 focus、节点类型、输入、图片准备状态、
+  LLM 协议/模型和结果摘要，不包含 API Key 或图片 data URL。
 - Responses 请求显式使用流式协议，并解析 ACU 返回的 Responses SSE 事件。
 
 0.1 不调用 TapNow 私有 API，不读取 TapNow Token，不处理 TapNow 的

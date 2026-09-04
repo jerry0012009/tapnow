@@ -3,6 +3,10 @@ import type {
   ReviewDraft,
   ReviewIssue
 } from "./reviewer";
+import {
+  DEFAULT_LLM_PROMPT,
+  MAX_LLM_PROMPT_LENGTH
+} from "./reviewer";
 
 export interface LlmReview {
   decision: ReviewDecision;
@@ -16,6 +20,7 @@ export interface LlmReview {
 export interface LlmSettings {
   apiKey: string;
   includeImages: boolean;
+  prompt?: string;
   protocol: "responses" | "chat_completions";
   model: string;
   baseUrl: string;
@@ -27,11 +32,7 @@ interface LlmRequestOptions {
   retryDelayMs?: number;
 }
 
-const SYSTEM_PROMPT = [
-  "审阅一个创作节点，帮助用户在运行前发现质量、上下文和团队风格问题。",
-  "只输出符合 JSON schema 的结果；不要改写原提示词，不要编造未提供的上下文。",
-  "decision 只能是 allow、warn、block；普通质量问题用 warn，明显无法运行或违反规则用 block。"
-].join(" ");
+const SYSTEM_PROMPT = DEFAULT_LLM_PROMPT;
 
 const REVIEW_SCHEMA = {
   type: "object",
@@ -82,8 +83,8 @@ function compactDraft(draft: ReviewDraft): string {
 function imageUrls(draft: ReviewDraft, includeImages: boolean): string[] {
   if (!includeImages) return [];
   return (draft.imageMaterials || [])
-    .map((item) => item.dataUrl || item.url)
-    .filter((url) => /^(?:https?:\/\/|data:image\/)/i.test(url))
+    .map((item) => item.dataUrl)
+    .filter((url): url is string => Boolean(url && /^data:image\//i.test(url)))
     .slice(0, 4);
 }
 
@@ -267,13 +268,16 @@ export async function reviewWithLlm(
     "Content-Type": "application/json",
     Authorization: `Bearer ${settings.apiKey}`
   };
+  const systemPrompt = String(settings.prompt || DEFAULT_LLM_PROMPT)
+    .trim()
+    .slice(0, MAX_LLM_PROMPT_LENGTH);
 
   const body =
     settings.protocol === "chat_completions"
       ? {
           model: settings.model,
           messages: [
-            { role: "system", content: SYSTEM_PROMPT },
+            { role: "system", content: systemPrompt },
             { role: "user", content: userContent(draft, settings.includeImages) }
           ],
           response_format: {
@@ -287,7 +291,7 @@ export async function reviewWithLlm(
         }
       : {
           model: settings.model,
-          instructions: SYSTEM_PROMPT,
+          instructions: systemPrompt,
           input: responseInput(draft, settings.includeImages),
           stream: true,
           text: {

@@ -1,11 +1,11 @@
-# TapNow Companion 0.1.4
+# TapNow Companion 0.1.5
 
-`tapnow-companion-0.1.4-chrome.zip` 是已经构建好的 Chrome 扩展包，普通
+`tapnow-companion-0.1.5-chrome.zip` 是已经构建好的 Chrome 扩展包，普通
 试用用户不需要安装 Node.js、npm 或运行任何构建命令。
 
 ## 个人安装
 
-1. 下载 `tapnow-companion-0.1.4-chrome.zip`。
+1. 下载 `tapnow-companion-0.1.5-chrome.zip`。
 2. 解压到一个不会被删除的目录。
 3. 打开 Chrome `chrome://extensions`。
 4. 开启右上角“开发者模式”。

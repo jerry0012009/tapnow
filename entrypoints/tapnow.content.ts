@@ -4,6 +4,7 @@ import {
   normalizeSettings,
   reviewDraft,
   inferPromptFromNodeText,
+  inferNodeTypeFromId,
   type LocalReview,
   type ReviewDraft,
   type ReviewSettings
@@ -87,6 +88,9 @@ export default defineContentScript({
           .issue strong { display: block; margin-bottom: 2px; }
           .suggestion { color: #334155; margin: 7px 0; }
           .llm { border-top: 1px solid #e2e8f0; margin-top: 14px; padding-top: 4px; }
+          .debug { margin-top: 14px; border-top: 1px solid #e2e8f0; padding-top: 10px; color: #64748b; font-size: 12px; }
+          .debug summary { cursor: pointer; font-weight: 700; }
+          .debug pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; margin: 8px 0 0; padding: 8px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; font: 11px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; color: #334155; }
           .footer { display: flex; gap: 8px; padding: 14px 16px; border-top: 1px solid #e2e8f0; }
           button.action { flex: 1; min-height: 38px; border: 1px solid #cbd5e1; border-radius: 7px; cursor: pointer; font: 600 13px system-ui, sans-serif; }
           button.primary { background: #0f766e; color: white; border-color: #0f766e; }
@@ -137,6 +141,11 @@ export default defineContentScript({
           "textarea, input:not([type=hidden]), [contenteditable=true]"
         ) as ActiveField | null;
         state.activeNode = nodeFor(target);
+        console.info("[TapNow Companion] focus", {
+          nodeId: getNodeId(state.activeNode),
+          nodeType: inferNodeTypeFromId(getNodeId(state.activeNode)),
+          fieldTag: state.activeField?.tagName || null
+        });
       }
 
       function nodeTextOf(element: Element | null): string {
@@ -185,34 +194,92 @@ export default defineContentScript({
 
       async function captureImage(
         image: HTMLImageElement
-      ): Promise<string | undefined> {
+      ): Promise<{ dataUrl?: string; error?: string }> {
+        async function encodeCanvas(
+          canvas: HTMLCanvasElement
+        ): Promise<string | undefined> {
+          for (const quality of [0.82, 0.68, 0.52]) {
+            const output = await new Promise<Blob | null>((resolve) =>
+              canvas.toBlob(resolve, "image/jpeg", quality)
+            );
+            if (output && output.size <= 4_000_000) {
+              return await blobToDataUrl(output);
+            }
+          }
+          return undefined;
+        }
+
+        async function compressBlob(blob: Blob): Promise<string | undefined> {
+          try {
+            const bitmap = await createImageBitmap(blob);
+            const maxDimension = 2048;
+            const scale = Math.min(
+              1,
+              maxDimension / Math.max(bitmap.width, bitmap.height)
+            );
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+            canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+            canvas.getContext("2d")?.drawImage(
+              bitmap,
+              0,
+              0,
+              canvas.width,
+              canvas.height
+            );
+            bitmap.close();
+            return await encodeCanvas(canvas);
+          } catch {
+            return undefined;
+          }
+        }
+
         const source = image.currentSrc || image.src;
         try {
           const response = await fetch(source, { credentials: "include" });
           if (response.ok) {
             const blob = await response.blob();
-            if (blob.size <= 4_000_000) return await blobToDataUrl(blob);
+            if (blob.size <= 4_000_000) {
+              return { dataUrl: await blobToDataUrl(blob) };
+            }
+            const compressed = await compressBlob(blob);
+            if (compressed) return { dataUrl: compressed };
+            return { error: "原图超过 4 MB，压缩后仍无法控制在发送上限内。" };
           }
         } catch {
-          // Keep metadata when the media host rejects a cross-origin fetch.
+          // The extension fetch below handles media hosts that reject page CORS.
         }
         try {
           const canvas = document.createElement("canvas");
-          canvas.width = image.naturalWidth;
-          canvas.height = image.naturalHeight;
-          canvas.getContext("2d")?.drawImage(image, 0, 0);
-          const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
-          return dataUrl.length <= 5_500_000 ? dataUrl : undefined;
+          const maxDimension = 2048;
+          const scale = Math.min(
+            1,
+            maxDimension / Math.max(image.naturalWidth, image.naturalHeight)
+          );
+          canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+          canvas.getContext("2d")?.drawImage(
+            image,
+            0,
+            0,
+            canvas.width,
+            canvas.height
+          );
+          const dataUrl = await encodeCanvas(canvas);
+          if (dataUrl) return { dataUrl };
         } catch {
-          try {
-            const response = (await browser.runtime.sendMessage({
-              type: "tapnow:capture-image",
-              url: source
-            })) as { ok?: boolean; dataUrl?: string };
-            return response?.ok && response.dataUrl ? response.dataUrl : undefined;
-          } catch {
-            return undefined;
-          }
+          // Fall through to the background fetch.
+        }
+        try {
+          const response = (await browser.runtime.sendMessage({
+            type: "tapnow:capture-image",
+            url: source
+          })) as { ok?: boolean; dataUrl?: string; error?: string };
+          return response?.ok && response.dataUrl
+            ? { dataUrl: response.dataUrl }
+            : { error: response?.error || "无法读取图片。" };
+        } catch {
+          return { error: "无法读取图片。" };
         }
       }
 
@@ -259,7 +326,11 @@ export default defineContentScript({
             height:
               image.naturalHeight || Math.round(image.getBoundingClientRect().height)
           };
-          if (includeImageData) material.dataUrl = await captureImage(image);
+          if (includeImageData) {
+            const captured = await captureImage(image);
+            material.dataUrl = captured.dataUrl;
+            material.captureError = captured.error;
+          }
           imageMaterials.push(material);
         }
 
@@ -269,6 +340,7 @@ export default defineContentScript({
           nodeType: (
             nodeElement?.getAttribute("data-node-type") ||
             nodeElement?.getAttribute("data-type") ||
+            inferNodeTypeFromId(getNodeId(nodeElement)) ||
             ""
           ).toLowerCase() || null,
           prompt,
@@ -295,7 +367,8 @@ export default defineContentScript({
         local: LocalReview,
         llm: LlmResponse["result"] | null = null,
         llmError = "",
-        imagePreparationAttempted = false
+        imagePreparationAttempted = false,
+        llmCalled = false
       ) {
         const issues = [...local.issues, ...(llm?.issues || [])];
         const issueHtml = issues.length
@@ -319,16 +392,68 @@ export default defineContentScript({
         const imageCount = draft.imageMaterials?.length || 0;
         const uploadable =
           draft.imageMaterials?.filter((image) => image.dataUrl).length || 0;
+        const captureErrors = [
+          ...new Set(
+            (draft.imageMaterials || [])
+              .filter((image) => !image.dataUrl && image.captureError)
+              .map((image) => image.captureError)
+          )
+        ];
         const materialSummary = state.settings.llmIncludeImages
           ? imagePreparationAttempted
-            ? `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 可发送图片 ${uploadable} 项`
+            ? `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 可发送图片 ${Math.min(uploadable, 4)} 项`
             : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 正在检查图片可发送性`
           : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 图片发送未开启`;
         const imageNotice = state.settings.llmIncludeImages
           ? imagePreparationAttempted
-            ? "图片仅在本地完成预检；点击“检测”才会发送给 LLM。"
+            ? `${captureErrors.length ? captureErrors.join(" ") + " " : ""}图片仅在本地完成预检；点击“检测”才会发送已准备的图片（最多 4 项）。`
             : "正在本地准备图片；此过程不会调用 LLM。"
           : "点击“检测”才会调用 LLM；当前未开启图片发送，只传图片元数据。";
+        const debugInfo = {
+          canvasId: draft.canvasId || null,
+          nodeId: draft.nodeId || null,
+          nodeType: draft.nodeType || null,
+          source: draft.source || null,
+          prompt: draft.prompt || "",
+          upstreamSummary: draft.upstreamSummary || "",
+          textMaterials: draft.textMaterials || [],
+          images: (draft.imageMaterials || []).map((image) => ({
+            url: image.url,
+            alt: image.alt || "",
+            width: image.width || null,
+            height: image.height || null,
+            prepared: Boolean(image.dataUrl),
+            preparedBytes: image.dataUrl
+              ? Math.round((image.dataUrl.length * 3) / 4)
+              : 0,
+            captureError: image.captureError || null
+          })),
+          settings: {
+            llmEnabled: state.settings.llmEnabled,
+            llmIncludeImages: state.settings.llmIncludeImages,
+            llmProtocol: state.settings.llmProtocol,
+            llmModel: state.settings.llmModel,
+            llmPrompt: state.settings.llmPrompt
+          },
+          request: {
+            called: llmCalled,
+            endpoint:
+              state.settings.llmProtocol === "responses"
+                ? `${state.settings.llmBaseUrl}/responses`
+                : `${state.settings.llmBaseUrl}/chat/completions`,
+            preparedImagesSent: state.settings.llmIncludeImages
+              ? Math.min(uploadable, 4)
+              : 0
+          },
+          llm: llm
+            ? {
+                called: llmCalled,
+                model: llm.model,
+                decision: llm.decision,
+                summary: llm.summary
+              }
+            : { called: llmCalled, error: llmError || null }
+        };
 
         body.innerHTML = `
           <div class="meta">画布：${escapeHtml(draft.canvasId || "未识别")}<br>节点：${escapeHtml(draft.nodeId || "未识别")}<br>来源：${escapeHtml(draft.source || "页面")}</div>
@@ -343,7 +468,12 @@ export default defineContentScript({
           ${llmHtml}
           ${suggestionsHtml}
           <div class="notice">${imageNotice}</div>
+          <details class="debug">
+            <summary>开发者信息</summary>
+            <pre>${escapeHtml(JSON.stringify(debugInfo, null, 2))}</pre>
+          </details>
         `;
+        console.info("[TapNow Companion] panel", debugInfo);
       }
 
       function clamp(value: number, minimum: number, maximum: number): number {
@@ -368,6 +498,13 @@ export default defineContentScript({
 
       async function openPanel() {
         const draft = await getDraft(false);
+        console.info("[TapNow Companion] local draft", {
+          ...draft,
+          imageMaterials: (draft.imageMaterials || []).map((image) => ({
+            ...image,
+            dataUrl: image.dataUrl ? `[${image.dataUrl.length} chars]` : undefined
+          }))
+        });
         const sequence = ++state.reviewSequence;
         panel.classList.remove("hidden");
         render(draft, reviewDraft(draft, state.settings));
@@ -397,6 +534,16 @@ export default defineContentScript({
         const prepareImages = state.settings.llmIncludeImages;
         const draft = await getDraft(prepareImages);
         const local = reviewDraft(draft, state.settings);
+        console.info("[TapNow Companion] detect request", {
+          draft: {
+            ...draft,
+            imageMaterials: (draft.imageMaterials || []).map((image) => ({
+              ...image,
+              dataUrl: image.dataUrl ? `[${image.dataUrl.length} chars]` : undefined
+            }))
+          },
+          local
+        });
         panel.classList.remove("hidden");
         render(draft, local, null, "", prepareImages);
         if (!state.settings.llmEnabled) {
@@ -425,8 +572,10 @@ export default defineContentScript({
               local,
               response?.ok ? response.result || null : null,
               response?.error || "",
-              prepareImages
+              prepareImages,
+              true
             );
+            console.info("[TapNow Companion] LLM result", response);
           }
         } catch (error) {
           if (sequence === state.reviewSequence) {
@@ -435,7 +584,8 @@ export default defineContentScript({
               local,
               null,
               error instanceof Error ? error.message : String(error),
-              prepareImages
+              prepareImages,
+              true
             );
           }
         } finally {

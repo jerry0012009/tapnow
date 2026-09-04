@@ -56,7 +56,10 @@ test("includes captured data URLs in multimodal request content", () => {
   const draft = {
     nodeId: "node-image",
     prompt: "审阅图片",
-    imageMaterials: [{ url: "https://example.com/image.png", dataUrl }]
+    imageMaterials: [
+      { url: "https://example.com/image.png", dataUrl },
+      { url: "https://example.com/not-prepared.png" }
+    ]
   };
   assert.deepEqual(llmInternals.userContent(draft, true)[1], {
     type: "image_url",
@@ -69,6 +72,62 @@ test("includes captured data URLs in multimodal request content", () => {
   assert.deepEqual(llmInternals.userContent(draft, false), [
     { type: "text", text: llmInternals.compactDraft(draft) }
   ]);
+});
+
+test("sends multiple prepared images and skips unprepared images", () => {
+  const image = (name: string) => ({
+    url: `https://example.com/${name}.png`,
+    dataUrl: "data:image/png;base64,ZmFrZQ=="
+  });
+  const content = llmInternals.userContent(
+    { prompt: "多图审阅", imageMaterials: [image("one"), image("two"), { url: "https://example.com/three.png" }] },
+    true
+  );
+  assert.equal(content.filter((part: any) => part.type === "image_url").length, 2);
+});
+
+test("uses a configured review prompt in the request", async () => {
+  const requests: any[] = [];
+  const server = http.createServer(async (request, response) => {
+    let raw = "";
+    for await (const chunk of request) raw += chunk;
+    requests.push(JSON.parse(raw));
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            decision: "allow",
+            summary: "已完成。",
+            issues: [],
+            suggestions: []
+          })
+        }
+      }]
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    await reviewWithLlm(
+      { prompt: "检查" },
+      {
+        apiKey: "test-key",
+        includeImages: false,
+        prompt: "只检查团队风格",
+        protocol: "chat_completions",
+        model: "test-model",
+        baseUrl: `http://127.0.0.1:${address.port}/v1`
+      },
+      { allowTestEndpoint: true }
+    );
+    assert.equal(requests[0].messages[0].content, "只检查团队风格");
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  }
 });
 
 test("rejects non-OpenAI base URLs in the personal 0.1 build", () => {

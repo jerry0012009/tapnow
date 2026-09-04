@@ -21,6 +21,7 @@ export interface ReviewDraft {
     width?: number;
     height?: number;
     dataUrl?: string;
+    captureError?: string;
   }>;
   fieldCount?: number;
   source?: string;
@@ -39,10 +40,19 @@ export interface ReviewSettings {
   forbiddenTerms: string[];
   llmEnabled: boolean;
   llmIncludeImages: boolean;
+  llmPrompt: string;
   llmProtocol: "responses" | "chat_completions";
   llmModel: string;
   llmBaseUrl: string;
 }
+
+export const DEFAULT_LLM_PROMPT = [
+  "审阅一个创作节点，帮助用户在运行前发现质量、上下文和团队风格问题。",
+  "只输出符合 JSON schema 的结果；不要改写原提示词，不要编造未提供的上下文。",
+  "decision 只能是 allow、warn、block；普通质量问题用 warn，明显无法运行或违反规则用 block。"
+].join(" ");
+
+export const MAX_LLM_PROMPT_LENGTH = 2000;
 
 const DRAG_HELP_TEXT =
   "To pick up a draggable item, press the space bar. While dragging, use the arrow keys to move the item. Press space again to drop the item in its new position, or press escape to cancel.";
@@ -67,12 +77,19 @@ export function inferPromptFromNodeText(value: unknown): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+export function inferNodeTypeFromId(value: unknown): string | null {
+  const id = String(value ?? "").trim().toLowerCase();
+  const match = id.match(/^([a-z][a-z0-9_]*)-/);
+  return match?.[1] || null;
+}
+
 export const DEFAULT_SETTINGS: ReviewSettings = {
   enabled: true,
   requiredTerms: [],
   forbiddenTerms: [],
   llmEnabled: false,
   llmIncludeImages: false,
+  llmPrompt: DEFAULT_LLM_PROMPT,
   llmProtocol: "responses",
   llmModel: "gpt-5.6-luna",
   llmBaseUrl: "https://api.acucompute.com/v1"
@@ -97,6 +114,9 @@ export function normalizeSettings(
     forbiddenTerms: splitTerms(settings.forbiddenTerms),
     llmEnabled: settings.llmEnabled === true,
     llmIncludeImages: settings.llmIncludeImages === true,
+    llmPrompt: String(settings.llmPrompt || DEFAULT_LLM_PROMPT)
+      .trim()
+      .slice(0, MAX_LLM_PROMPT_LENGTH),
     llmProtocol:
       settings.llmProtocol === "chat_completions"
         ? "chat_completions"

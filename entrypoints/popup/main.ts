@@ -32,6 +32,9 @@ app.innerHTML = `
     <div class="section">
       <div class="row"><input id="llmEnabled" type="checkbox"><label for="llmEnabled">启用 LLM 审阅</label></div>
       <div class="row"><input id="llmIncludeImages" type="checkbox"><label for="llmIncludeImages">检测时发送图片素材</label></div>
+    <label for="llmPrompt">LLM 审阅提示词</label>
+    <textarea id="llmPrompt" maxlength="2000" placeholder="用于指导模型审阅当前节点，只输出 JSON 结果。"></textarea>
+    <div class="hint">检测时作为 system/instructions 发送，最多 2000 字符。</div>
     <label for="llmProtocol">接口协议</label>
     <select id="llmProtocol">
       <option value="responses">Responses</option>
@@ -60,6 +63,7 @@ const settings = normalizeSettings(syncSettings);
 ($("enabled") as HTMLInputElement).checked = settings.enabled;
 ($("llmEnabled") as HTMLInputElement).checked = settings.llmEnabled;
 ($("llmIncludeImages") as HTMLInputElement).checked = settings.llmIncludeImages;
+($("llmPrompt") as HTMLTextAreaElement).value = settings.llmPrompt;
 ($("llmProtocol") as HTMLSelectElement).value = settings.llmProtocol;
 ($("llmModel") as HTMLInputElement).value = settings.llmModel;
 ($("llmBaseUrl") as HTMLInputElement).value = settings.llmBaseUrl;
@@ -74,6 +78,7 @@ $("save").addEventListener("click", async () => {
     enabled: ($("enabled") as HTMLInputElement).checked,
     llmEnabled: ($("llmEnabled") as HTMLInputElement).checked,
     llmIncludeImages: ($("llmIncludeImages") as HTMLInputElement).checked,
+    llmPrompt: ($("llmPrompt") as HTMLTextAreaElement).value,
     llmProtocol: ($("llmProtocol") as HTMLSelectElement).value as ReviewSettings["llmProtocol"],
     llmModel: ($("llmModel") as HTMLInputElement).value,
     llmBaseUrl: ($("llmBaseUrl") as HTMLInputElement).value,
