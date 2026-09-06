@@ -26,14 +26,24 @@ export function dataUrlByteLength(dataUrl: string): number {
 export function selectPreparedImageUrls(
   images: Array<{ dataUrl?: string }> = []
 ): string[] {
-  const selected: string[] = [];
+  return selectPreparedImages(images).map((item) => item.dataUrl);
+}
+
+export function selectPreparedImages<
+  T extends { dataUrl?: string } = { dataUrl?: string }
+>(
+  images: T[] = []
+): Array<{ image: T; index: number; dataUrl: string }> {
+  const selected: Array<{ image: T; index: number; dataUrl: string }> = [];
   let usedChars = 0;
 
-  for (const image of images.slice(0, MAX_REVIEW_IMAGE_MATERIALS)) {
+  for (const [index, image] of images
+    .slice(0, MAX_REVIEW_IMAGE_MATERIALS)
+    .entries()) {
     const dataUrl = image.dataUrl;
     if (!dataUrl || !/^data:image\//i.test(dataUrl)) continue;
     if (usedChars + dataUrl.length > MAX_IMAGE_DATA_URL_CHARS) continue;
-    selected.push(dataUrl);
+    selected.push({ image, index, dataUrl });
     usedChars += dataUrl.length;
   }
 
@@ -50,18 +60,18 @@ export function preparedImageStats(
       (dataUrl): dataUrl is string =>
         Boolean(dataUrl && /^data:image\//i.test(dataUrl))
     );
-  const selected = selectPreparedImageUrls(images);
+  const selected = selectPreparedImages(images);
 
   return {
     preparedCount: prepared.length,
     sentCount: selected.length,
     omittedCount: prepared.length - selected.length,
     sentDataUrlChars: selected.reduce(
-      (sum, dataUrl) => sum + dataUrl.length,
+      (sum, item) => sum + item.dataUrl.length,
       0
     ),
     sentImageBytes: selected.reduce(
-      (sum, dataUrl) => sum + dataUrlByteLength(dataUrl),
+      (sum, item) => sum + dataUrlByteLength(item.dataUrl),
       0
     ),
     budgetChars: MAX_IMAGE_DATA_URL_CHARS

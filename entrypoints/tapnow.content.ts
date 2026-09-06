@@ -6,9 +6,20 @@ import {
   inferPromptFromNodeText,
   inferNodeTypeFromId,
   type LocalReview,
+  type ReviewConnectionInfo,
   type ReviewDraft,
+  type ReviewNodeInfo,
   type ReviewSettings
 } from "../utils/reviewer";
+import {
+  buildReferenceBindings,
+  relationsFromPayload,
+  snapshotFromPayload,
+  toReviewConnectionInfo,
+  toReviewNodeInfo,
+  type TapNowApiNode,
+  type TapNowCanvasSnapshot
+} from "../utils/tapnow";
 import { reviewPayloadStats } from "../utils/llm";
 import {
   MAX_REVIEW_IMAGE_MATERIALS,
@@ -16,7 +27,8 @@ import {
   MAX_REVIEW_TEXT_MATERIAL_ITEM_CHARS,
   MAX_REVIEW_TEXT_MATERIALS,
   MAX_REVIEW_UPSTREAM_CHARS,
-  MAX_SINGLE_IMAGE_BYTES
+  MAX_SINGLE_IMAGE_BYTES,
+  selectPreparedImages
 } from "../utils/limits";
 
 interface LlmResponse {
@@ -210,6 +222,54 @@ export default defineContentScript({
           ?.toLowerCase() || null;
       }
 
+      function domNodeInfo(element: Element): ReviewNodeInfo | null {
+        const id = getNodeId(element);
+        if (!id) return null;
+        const nodeType = nodeTypeOf(element);
+        const media = [...element.querySelectorAll("img")]
+          .filter(
+            (image) =>
+              visible(image) &&
+              image.naturalWidth >= 64 &&
+              image.naturalHeight >= 64 &&
+              !image.closest(
+                "[data-testid='canvas-node-generation-input-bar']"
+              )
+          )
+          .map((image) => ({
+            url: sourceImageUrl(image.currentSrc || image.src),
+            width: image.naturalWidth,
+            height: image.naturalHeight
+          }))
+          .filter((item) => /^https?:\/\//i.test(item.url));
+        return {
+          id,
+          canvasId: null,
+          nodeType,
+          dataType: null,
+          title: null,
+          shortId: null,
+          data: {},
+          prompt: "",
+          text: nodeType === "text" ? nodeTextOf(element) : "",
+          params: null,
+          media,
+          taskStatus: null,
+          position: { x: null, y: null },
+          measured: { width: null, height: null },
+          dimensions: { width: null, height: null },
+          parentId: null,
+          extent: null,
+          sourcePosition: null,
+          targetPosition: null,
+          sessionId: null,
+          createdBy: null,
+          createdByRole: null,
+          createdAt: null,
+          updatedAt: null
+        };
+      }
+
       function findNodeById(nodeId: string | null): Element | null {
         if (!nodeId) return null;
         return [...document.querySelectorAll(".react-flow__node[data-id]")].find(
@@ -226,6 +286,50 @@ export default defineContentScript({
           if (match?.[2] === nodeId) result.push(match[1]);
         }
         return [...new Set(result)];
+      }
+
+      function outgoingNodeIds(nodeId: string | null): string[] {
+        if (!nodeId) return [];
+        const result: string[] = [];
+        for (const edge of document.querySelectorAll("[aria-label^='Edge from ']")) {
+          const label = edge.getAttribute("aria-label") || "";
+          const match = label.match(/^Edge from (.+) to (.+)$/);
+          if (match?.[1] === nodeId) result.push(match[2]);
+        }
+        return [...new Set(result)];
+      }
+
+      function domConnectionsFor(
+        nodeId: string | null,
+        direction: "incoming" | "outgoing"
+      ): ReviewConnectionInfo[] {
+        if (!nodeId) return [];
+        const result: ReviewConnectionInfo[] = [];
+        for (const edge of document.querySelectorAll("[aria-label^='Edge from ']")) {
+          const label = edge.getAttribute("aria-label") || "";
+          const match = label.match(/^Edge from (.+) to (.+)$/);
+          if (!match) continue;
+          const source = match[1];
+          const target = match[2];
+          if (
+            (direction === "incoming" && target !== nodeId) ||
+            (direction === "outgoing" && source !== nodeId)
+          ) {
+            continue;
+          }
+          const id =
+            edge.getAttribute("data-id") ||
+            `dom-edge-${source}-${target}`;
+          result.push({
+            id,
+            source,
+            target,
+            sourceHandle: null,
+            targetHandle: null,
+            label: ""
+          });
+        }
+        return result;
       }
 
       function normalizedImageUrl(value: string): string {
@@ -246,6 +350,135 @@ export default defineContentScript({
         } catch {
           return value;
         }
+      }
+
+      function captureSourceUrl(value: string): string {
+        const source = sourceImageUrl(value);
+        try {
+          const parsed = new URL(source);
+          if (parsed.hostname === "files.tapnow.top") {
+            parsed.hostname = "files.tapnow.media";
+          }
+          return parsed.toString();
+        } catch {
+          return source;
+        }
+      }
+
+      function promptValue(value: unknown): string {
+        const prompt = inferPromptFromNodeText(value);
+        return prompt === "/" || prompt === "-" ? "" : prompt;
+      }
+
+      function opaquePromptReason(value: string): string | null {
+        if (/^[a-f0-9]{32}$/i.test(value)) {
+          return "仅包含 32 位内部哈希，未作为用户提示词使用。";
+        }
+        if (/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value)) {
+          return "仅包含内部 UUID，未作为用户提示词使用。";
+        }
+        return null;
+      }
+
+      function imageIdentity(value: string): string {
+        try {
+          const parsed = new URL(sourceImageUrl(value));
+          parsed.searchParams.delete("tap_mx");
+          if (/^files\.tapnow\.(?:media|top)$/i.test(parsed.hostname)) {
+            return parsed.pathname;
+          }
+          return parsed.toString();
+        } catch {
+          return value;
+        }
+      }
+
+      async function fetchCanvasSnapshot(
+        canvasId: string
+      ): Promise<{
+        snapshot: TapNowCanvasSnapshot;
+        endpoint: string;
+        relationsEndpoint: string;
+        relationsError: string;
+      }> {
+        const endpoint = new URL(
+          `/api/canvas/v1/canvases/${encodeURIComponent(
+            canvasId
+          )}?with_nodes=true&with_connections=true`,
+          location.origin
+        ).toString();
+        const accessToken = localStorage.getItem("access_token");
+        if (!accessToken) {
+          throw new Error("TapNow 页面没有可用的登录会话。");
+        }
+        const response = await fetch(endpoint, {
+          credentials: "include",
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (!response.ok) {
+          throw new Error(`TapNow 画布接口 HTTP ${response.status}`);
+        }
+        const snapshot = snapshotFromPayload(await response.json());
+        if (!snapshot) {
+          throw new Error("TapNow 画布接口没有返回节点和连线数据。");
+        }
+
+        const relationsEndpoint = new URL(
+          `/api/canvas/v1/canvases/${encodeURIComponent(
+            canvasId
+          )}/nodes?limit=1000&include_relations=true`,
+          location.origin
+        ).toString();
+        let relationsError = "";
+        try {
+          const relationsResponse = await fetch(relationsEndpoint, {
+            credentials: "include",
+            headers: { Authorization: `Bearer ${accessToken}` }
+          });
+          if (!relationsResponse.ok) {
+            throw new Error(
+              `TapNow 节点关系接口 HTTP ${relationsResponse.status}`
+            );
+          }
+          snapshot.relations =
+            relationsFromPayload(await relationsResponse.json()) || undefined;
+          if (!snapshot.relations) {
+            throw new Error("TapNow 节点关系接口没有返回 relations。");
+          }
+        } catch (error) {
+          relationsError =
+            error instanceof Error ? error.message : String(error);
+        }
+        return {
+          snapshot,
+          endpoint,
+          relationsEndpoint,
+          relationsError
+        };
+      }
+
+      function focusedReferenceUrls(element: Element | null): string[] {
+        if (!element) return [];
+        return [...element.querySelectorAll(
+          "[data-testid='canvas-node-generation-input-bar'] img"
+        )]
+          .filter(visible)
+          .map((image) =>
+            ({
+              image,
+              url: sourceImageUrl(
+                image.currentSrc || image.getAttribute("src") || ""
+              )
+            })
+          )
+          .filter(
+            ({ image, url }) =>
+              image.naturalWidth >= 64 &&
+              image.naturalHeight >= 64 &&
+              /^https?:\/\//i.test(url)
+          )
+          .map(({ url }) => url)
+          .filter(Boolean);
       }
 
       function visible(element: Element): boolean {
@@ -272,6 +505,7 @@ export default defineContentScript({
         image: HTMLImageElement | string
       ): Promise<{
         dataUrl?: string;
+        sourceUrl?: string;
         error?: string;
         compression?: {
           applied: boolean;
@@ -325,7 +559,9 @@ export default defineContentScript({
         }
 
         const source =
-          typeof image === "string" ? image : image.currentSrc || image.src;
+          typeof image === "string"
+            ? captureSourceUrl(image)
+            : captureSourceUrl(image.currentSrc || image.src);
         try {
           const response = await fetch(source, { credentials: "include" });
           if (response.ok) {
@@ -333,6 +569,7 @@ export default defineContentScript({
             if (blob.size <= MAX_SINGLE_IMAGE_BYTES) {
               return {
                 dataUrl: await blobToDataUrl(blob),
+                sourceUrl: source,
                 compression: {
                   applied: false,
                   method: "original",
@@ -345,6 +582,7 @@ export default defineContentScript({
             if (compressed) {
               return {
                 dataUrl: compressed.dataUrl,
+                sourceUrl: source,
                 compression: {
                   applied: true,
                   method: "page-canvas-jpeg-2048",
@@ -381,6 +619,7 @@ export default defineContentScript({
             if (encoded) {
               return {
                 dataUrl: encoded.dataUrl,
+                sourceUrl: source,
                 compression: {
                   applied: true,
                   method: "page-canvas-jpeg-2048",
@@ -400,6 +639,7 @@ export default defineContentScript({
           })) as {
             ok?: boolean;
             dataUrl?: string;
+            sourceUrl?: string;
             error?: string;
             compression?: {
               applied: boolean;
@@ -411,6 +651,7 @@ export default defineContentScript({
           return response?.ok && response.dataUrl
             ? {
                 dataUrl: response.dataUrl,
+                sourceUrl: response.sourceUrl || source,
                 compression: response.compression
               }
             : { error: response?.error || "无法读取图片。" };
@@ -426,20 +667,189 @@ export default defineContentScript({
           (!state.activeNode || state.activeNode.contains(state.activeField))
             ? state.activeField
             : null;
+        // TapNow's selected node is the authoritative focus. The pointer event
+        // can be swallowed by a scaled image child, leaving our remembered
+        // node one interaction behind.
+        const selectedNode = document.querySelector(".react-flow__node.selected");
         const rememberedNode =
-          state.activeNode && document.contains(state.activeNode)
+          selectedNode ||
+          (state.activeNode && document.contains(state.activeNode)
             ? state.activeNode
-            : findNodeById(state.activeNodeId);
+            : findNodeById(state.activeNodeId));
         const nodeElement = rememberedNode || (field ? nodeFor(field) : null);
         const nodeId = getNodeId(nodeElement) || state.activeNodeId;
-        const nodeType = nodeTypeOf(nodeElement);
+        const domNodeType = nodeTypeOf(nodeElement);
         const currentNodeText = nodeTextOf(nodeElement);
-        const fieldPrompt = inferPromptFromNodeText(textOf(field));
-        const currentPrompt =
-          nodeType === "text" ? inferPromptFromNodeText(currentNodeText) : "";
-        const connectedNodes = incomingNodeIds(nodeId)
+        const fieldIsPrompt = Boolean(
+          field?.closest(
+            "[data-testid='canvas-node-prompt-textarea'], " +
+              "[data-testid='canvas-node-generation-input-bar']"
+          )
+        );
+        const fieldPrompt = fieldIsPrompt ? promptValue(textOf(field)) : "";
+        const canvasId =
+          location.pathname.split("/").filter(Boolean).pop() || null;
+        let apiSnapshot: TapNowCanvasSnapshot | null = null;
+        let apiEndpoint = "";
+        let apiSnapshotError = "";
+        let apiRelationsEndpoint = "";
+        let apiRelationsError = "";
+        if (canvasId && nodeId) {
+          try {
+            const result = await fetchCanvasSnapshot(canvasId);
+            apiSnapshot = result.snapshot;
+            apiEndpoint = result.endpoint;
+            apiRelationsEndpoint = result.relationsEndpoint;
+            apiRelationsError = result.relationsError;
+          } catch (error) {
+            apiSnapshotError =
+              error instanceof Error ? error.message : String(error);
+            console.info("[TapNow Companion] canvas API unavailable", {
+              error: apiSnapshotError
+            });
+          }
+        }
+
+        const apiNodeMap = new Map(
+          (apiSnapshot?.nodes || [])
+            .map((node) => [String(node.id || ""), node] as const)
+            .filter(([id]) => Boolean(id))
+        );
+        const apiFocusRecord = nodeId
+          ? apiNodeMap.get(nodeId) || null
+          : null;
+        const apiFocusInfo = apiFocusRecord
+          ? toReviewNodeInfo(apiFocusRecord, sourceImageUrl)
+          : null;
+        const nodeType =
+          domNodeType ||
+          apiFocusInfo?.nodeType ||
+          inferNodeTypeFromId(nodeId);
+        const apiIncomingConnectionsUnordered = (apiSnapshot?.connections || [])
+          .filter((connection) => String(connection.target || "") === nodeId)
+          .map(toReviewConnectionInfo)
+          .filter((connection): connection is ReviewConnectionInfo =>
+            Boolean(connection)
+          );
+        const relationIncomingIds =
+          (nodeId && apiSnapshot?.relations?.[nodeId]?.incoming) || [];
+        const incomingRelationRank = new Map(
+          relationIncomingIds.map((sourceId, index) => [sourceId, index] as const)
+        );
+        // The canvas endpoint keeps connection order stable. The relations
+        // endpoint does not: its peer arrays can arrive in a different order
+        // between identical requests, so it must not define Image N mapping.
+        const apiIncomingConnections = apiIncomingConnectionsUnordered;
+        const apiIncomingRecords = apiIncomingConnections
+          .map((connection) => apiNodeMap.get(connection.source))
+          .filter((node): node is TapNowApiNode => Boolean(node));
+        const apiIncomingInfos = apiIncomingRecords
+          .map((node) => toReviewNodeInfo(node, sourceImageUrl))
+          .filter((node): node is ReviewNodeInfo => Boolean(node));
+        const domConnectedNodes = incomingNodeIds(nodeId)
           .map((sourceId) => findNodeById(sourceId))
           .filter((node): node is Element => Boolean(node));
+        const apiOutgoingConnectionsUnordered = (apiSnapshot?.connections || [])
+          .filter((connection) => String(connection.source || "") === nodeId)
+          .map(toReviewConnectionInfo)
+          .filter((connection): connection is ReviewConnectionInfo =>
+            Boolean(connection)
+          );
+        const apiOutgoingConnections = apiOutgoingConnectionsUnordered;
+        const apiOutgoingRecords = apiOutgoingConnections
+          .map((connection) => apiNodeMap.get(connection.target))
+          .filter((node): node is TapNowApiNode => Boolean(node));
+        const apiOutgoingInfos = apiOutgoingRecords
+          .map((node) => toReviewNodeInfo(node, sourceImageUrl))
+          .filter((node): node is ReviewNodeInfo => Boolean(node));
+        const domOutgoingNodes = outgoingNodeIds(nodeId)
+          .map((targetId) => findNodeById(targetId))
+          .filter((node): node is Element => Boolean(node));
+        const incomingCandidateInfos = [
+          ...new Map(
+            [
+              ...domConnectedNodes
+                .map(domNodeInfo)
+                .filter((node): node is ReviewNodeInfo => Boolean(node)),
+              ...apiIncomingInfos
+            ].map((info) => [info.id, info] as const)
+          ).values()
+        ];
+        const outgoingCandidateInfos = [
+          ...new Map(
+            [
+              ...domOutgoingNodes
+                .map(domNodeInfo)
+                .filter((node): node is ReviewNodeInfo => Boolean(node)),
+              ...apiOutgoingInfos
+            ].map((info) => [info.id, info] as const)
+          ).values()
+        ];
+        const domReferenceUrls = focusedReferenceUrls(nodeElement);
+        const domReferenceOrder = domReferenceUrls.map(imageIdentity);
+        const domReferenceRank = new Map(
+          domReferenceOrder.map((key, index) => [key, index] as const)
+        );
+        const incomingInfos = [...incomingCandidateInfos].sort((left, right) => {
+          const leftRank = Math.min(
+            ...left.media.map((media) => domReferenceRank.get(
+              imageIdentity(media.url)
+            ) ?? Number.MAX_SAFE_INTEGER)
+          );
+          const rightRank = Math.min(
+            ...right.media.map((media) => domReferenceRank.get(
+              imageIdentity(media.url)
+            ) ?? Number.MAX_SAFE_INTEGER)
+          );
+          const leftConnectionRank = apiIncomingConnections.findIndex(
+            (connection) => connection.source === left.id
+          );
+          const rightConnectionRank = apiIncomingConnections.findIndex(
+            (connection) => connection.source === right.id
+          );
+          const leftFallbackRank =
+            leftConnectionRank >= 0
+              ? leftConnectionRank
+              : incomingRelationRank.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+          const rightFallbackRank =
+            rightConnectionRank >= 0
+              ? rightConnectionRank
+              : incomingRelationRank.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+          return leftRank - rightRank || leftFallbackRank - rightFallbackRank;
+        });
+        const incomingNodeRank = new Map(
+          incomingInfos.map((info, index) => [info.id, index] as const)
+        );
+        const incomingConnectionCandidates = [
+          ...new Map(
+            [
+              ...apiIncomingConnections,
+              ...domConnectionsFor(nodeId, "incoming")
+            ].map((connection) => [connection.id, connection] as const)
+          ).values()
+        ];
+        const incomingConnections = incomingConnectionCandidates.sort(
+          (left, right) =>
+            (incomingNodeRank.get(left.source) ?? Number.MAX_SAFE_INTEGER) -
+            (incomingNodeRank.get(right.source) ?? Number.MAX_SAFE_INTEGER)
+        );
+        const outgoingNodes = [...outgoingCandidateInfos];
+        const outgoingNodeRank = new Map(
+          outgoingNodes.map((info, index) => [info.id, index] as const)
+        );
+        const outgoingConnectionCandidates = [
+          ...new Map(
+            [
+              ...apiOutgoingConnections,
+              ...domConnectionsFor(nodeId, "outgoing")
+            ].map((connection) => [connection.id, connection] as const)
+          ).values()
+        ];
+        const outgoingConnections = outgoingConnectionCandidates.sort(
+          (left, right) =>
+            (outgoingNodeRank.get(left.target) ?? Number.MAX_SAFE_INTEGER) -
+            (outgoingNodeRank.get(right.target) ?? Number.MAX_SAFE_INTEGER)
+        );
         const textMaterials: string[] = [];
         const textMaterialSources: NonNullable<
           ReviewDraft["textMaterialSources"]
@@ -455,104 +865,329 @@ export default defineContentScript({
           textMaterialSources.push(source);
         };
 
-        if (fieldPrompt) {
-          addText(fieldPrompt, {
-            nodeId,
-            nodeType,
-            role: "focused-node-input"
-          });
-        }
-        if (currentPrompt && currentPrompt !== fieldPrompt) {
-          addText(currentPrompt, {
-            nodeId,
-            nodeType,
-            role: "focused-node-text"
-          });
-        }
-        for (const connectedNode of connectedNodes) {
-          if (nodeTypeOf(connectedNode) !== "text") continue;
-          const connectedText = nodeTextOf(connectedNode);
+        const apiPrompt = promptValue(apiFocusInfo?.prompt);
+        const apiOutputText = apiFocusInfo?.text || "";
+        const domCurrentPrompt =
+          nodeType === "text" ? promptValue(currentNodeText) : "";
+        const promptCandidates = [
+          { source: "focused-node-input", value: fieldPrompt },
+          { source: "tapnow-api.node.data.prompt", value: apiPrompt },
+          {
+            source: "tapnow-api.node.data.text",
+            value: nodeType === "text" ? apiOutputText : ""
+          },
+          {
+            source: "focused-node-dom",
+            value: apiFocusInfo ? "" : domCurrentPrompt
+          }
+        ]
+          .map((candidate) => ({
+            ...candidate,
+            selected: false,
+            ignoredReason: candidate.value
+              ? opaquePromptReason(candidate.value)
+              : "该来源没有可用值。"
+          }));
+        const selectedPromptCandidate =
+          promptCandidates.find(
+            (candidate) => Boolean(candidate.value) && !candidate.ignoredReason
+          ) || null;
+        if (selectedPromptCandidate) selectedPromptCandidate.selected = true;
+        const currentPrompt = selectedPromptCandidate?.value || "";
+        for (const connectedInfo of incomingInfos) {
+          if (connectedInfo.nodeType !== "text") continue;
+          const connectedText = connectedInfo.text;
           if (!connectedText) continue;
           addText(connectedText, {
-            nodeId: getNodeId(connectedNode),
-            nodeType: nodeTypeOf(connectedNode),
-            role: "upstream-node"
+            nodeId: connectedInfo.id,
+            nodeType: connectedInfo.nodeType,
+            role: "upstream-node-output"
           });
+        }
+        if (!apiSnapshot) {
+          for (const connectedNode of domConnectedNodes) {
+            if (nodeTypeOf(connectedNode) !== "text") continue;
+            const connectedText = nodeTextOf(connectedNode);
+            if (!connectedText) continue;
+            addText(connectedText, {
+              nodeId: getNodeId(connectedNode),
+              nodeType: nodeTypeOf(connectedNode),
+              role: "upstream-node-output"
+            });
+          }
         }
 
         const prompt = (
-          fieldPrompt ||
-          (nodeType === "text" ? currentPrompt : "") ||
+          currentPrompt ||
           textMaterials[0] ||
           ""
         ).slice(0, MAX_REVIEW_PROMPT_CHARS);
-        const upstreamTexts = connectedNodes
-          .filter((connectedNode) => nodeTypeOf(connectedNode) === "text")
-          .map((connectedNode) => nodeTextOf(connectedNode))
-          .filter(Boolean);
+        const promptSource = currentPrompt
+          ? selectedPromptCandidate?.source || null
+          : textMaterials[0]
+            ? "direct-upstream-text-output"
+            : null;
+        const referenceSources: Array<{
+          info: ReviewNodeInfo | null;
+          url: string;
+          alt?: string;
+          width?: number | null;
+          height?: number | null;
+        }> = [];
+        const addReferenceSource = (candidate: {
+          info: ReviewNodeInfo | null;
+          url: string;
+          alt?: string;
+          width?: number | null;
+          height?: number | null;
+        }) => {
+          const url = sourceImageUrl(candidate.url).slice(0, 2_000);
+          if (!/^https?:\/\//i.test(url)) return;
+          const key = imageIdentity(url);
+          if (referenceSources.some((source) => imageIdentity(source.url) === key)) {
+            return;
+          }
+          referenceSources.push({ ...candidate, url });
+        };
+        if (domReferenceUrls.length) {
+          for (const domUrl of domReferenceUrls) {
+            const referenceKey = imageIdentity(domUrl);
+            const matchingInfo =
+              incomingInfos.find((info) =>
+                info.media.some(
+                  (media) => imageIdentity(media.url) === referenceKey
+                )
+              ) || null;
+            const matchingMedia = matchingInfo?.media.find(
+              (media) => imageIdentity(media.url) === referenceKey
+            );
+            addReferenceSource({
+              info: matchingInfo,
+              url: domUrl,
+              alt: "referenceImage",
+              width: matchingMedia?.width,
+              height: matchingMedia?.height
+            });
+          }
+        } else {
+          for (const info of incomingInfos) {
+            if (!info.media.length) continue;
+            const media = info.media[0];
+            addReferenceSource({
+              info,
+              url: media.url,
+              alt: "referenceImage",
+              width: media.width,
+              height: media.height
+            });
+          }
+        }
+        if (!apiSnapshot) {
+          for (const connectedNode of domConnectedNodes) {
+            const image = [...connectedNode.querySelectorAll("img")]
+              .filter(visible)
+              .find(
+                (candidate) =>
+                  candidate.naturalWidth >= 64 && candidate.naturalHeight >= 64
+              );
+            if (!image) continue;
+            addReferenceSource({
+              info: domNodeInfo(connectedNode),
+              url: image.currentSrc || image.src,
+              alt: "referenceImage",
+              width: image.naturalWidth,
+              height: image.naturalHeight
+            });
+          }
+        }
 
-        const imageSources = [
-          ...(nodeElement ? [{ node: nodeElement, role: "focused-node" }] : []),
-          ...connectedNodes.map((node) => ({ node, role: "upstream-node" }))
-        ];
+        const outputSources: Array<{
+          url: string;
+          alt?: string;
+          width?: number | null;
+          height?: number | null;
+        }> = [];
+        const addOutputSource = (candidate: {
+          url: string;
+          alt?: string;
+          width?: number | null;
+          height?: number | null;
+        }) => {
+          const url = sourceImageUrl(candidate.url).slice(0, 2_000);
+          if (!/^https?:\/\//i.test(url)) return;
+          if (outputSources.some((source) => imageIdentity(source.url) === imageIdentity(url))) {
+            return;
+          }
+          outputSources.push({ ...candidate, url });
+        };
+        for (const media of apiFocusInfo?.media || []) {
+          addOutputSource(media);
+        }
+        if (nodeElement) {
+          for (const image of [...nodeElement.querySelectorAll("img")]) {
+            if (
+              !visible(image) ||
+              image.naturalWidth < 64 ||
+              image.naturalHeight < 64 ||
+              image.closest(
+                "[data-testid='canvas-node-generation-input-bar']"
+              )
+            ) {
+              continue;
+            }
+            addOutputSource({
+              url: image.currentSrc || image.src,
+              alt: image.alt,
+              width: image.naturalWidth,
+              height: image.naturalHeight
+            });
+          }
+        }
+
         const imageMaterials: NonNullable<ReviewDraft["imageMaterials"]> = [];
         const seenImages = new Set<string>();
-        for (const { node, role } of imageSources) {
-          const sourceNodeId = getNodeId(node);
-          const sourceNodeType = inferNodeTypeFromId(sourceNodeId);
-          const imageElements = [...node.querySelectorAll("img")]
-            .filter(visible)
-            .filter(
-              (image) => image.naturalWidth >= 64 && image.naturalHeight >= 64
+        const addImageMaterial = async (candidate: {
+          url: string;
+          alt?: string;
+          width?: number | null;
+          height?: number | null;
+          sourceNodeId?: string | null;
+          sourceNodeType?: string | null;
+          sourceTitle?: string | null;
+          role: string;
+        }) => {
+          if (imageMaterials.length >= MAX_REVIEW_IMAGE_MATERIALS) return null;
+          const url = sourceImageUrl(candidate.url).slice(0, 2_000);
+          const imageKey = imageIdentity(url);
+          if (!/^https?:\/\//i.test(url) || seenImages.has(imageKey)) return null;
+          seenImages.add(imageKey);
+          const material: NonNullable<
+            ReviewDraft["imageMaterials"]
+          >[number] = {
+            materialId: `image-${imageMaterials.length + 1}`,
+            url,
+            alt: (candidate.alt || "").slice(0, 300),
+            width: candidate.width || null,
+            height: candidate.height || null,
+            sourceNodeId: candidate.sourceNodeId || null,
+            sourceNodeType: candidate.sourceNodeType || null,
+            sourceTitle: candidate.sourceTitle || null,
+            role: candidate.role
+          };
+          if (includeImageData) {
+            const captured = await captureImage(url);
+            material.dataUrl = captured.dataUrl;
+            material.captureSourceUrl = captured.sourceUrl;
+            material.captureError = captured.error;
+            material.compression = captured.compression;
+          }
+          imageMaterials.push(material);
+          return material;
+        };
+
+        const referenceMaterialIds: Array<string | null> = [];
+        for (const source of referenceSources) {
+          const material = await addImageMaterial({
+            url: source.url,
+            alt: source.alt,
+            width: source.width,
+            height: source.height,
+            sourceNodeId: source.info?.id,
+            sourceNodeType: source.info?.nodeType,
+            sourceTitle: source.info?.title,
+            role: "upstream-reference"
+          });
+          referenceMaterialIds.push(material?.materialId || null);
+        }
+        for (const source of outputSources) {
+          await addImageMaterial({
+            ...source,
+            sourceNodeId: nodeId,
+            sourceNodeType: nodeType,
+            sourceTitle: apiFocusInfo?.title,
+            role: "focused-node-output"
+          });
+        }
+        const referenceBindings = buildReferenceBindings(
+          prompt,
+          referenceSources
+            .map((source) => source.info)
+            .filter((info): info is ReviewNodeInfo => Boolean(info)),
+          referenceMaterialIds
+        );
+        for (const binding of referenceBindings) {
+          const material = imageMaterials.find(
+            (candidate) => candidate.materialId === binding.materialId
+          );
+          if (material) {
+            material.reference = binding.reference;
+            material.referenceIndex = Number(
+              binding.reference.match(/\d+/)?.[0] || 0
             );
-          for (const image of imageElements) {
-            if (imageMaterials.length >= MAX_REVIEW_IMAGE_MATERIALS) break;
-            const url = sourceImageUrl(
-              (image.currentSrc || image.src).slice(0, 2000)
+          }
+        }
+        const referenceNumberByNodeId = new Map(
+          referenceSources
+            .map((source, index) => [source.info?.id, index + 1] as const)
+            .filter(([id]) => Boolean(id))
+        );
+        const upstreamSummaryParts: string[] = [];
+        for (const info of incomingInfos) {
+          if (info.nodeType === "text" && info.text) {
+            upstreamSummaryParts.push(
+              `[上游文字 ${info.id}${info.title ? ` / ${info.title}` : ""}]\n${info.text}`
             );
-            const imageKey = normalizedImageUrl(url);
-            if (!url || seenImages.has(imageKey)) continue;
-            seenImages.add(imageKey);
-            const material: NonNullable<ReviewDraft["imageMaterials"]>[number] = {
-              materialId: `image-${imageMaterials.length + 1}`,
-              url,
-              alt: (image.alt || "").slice(0, 300),
-              width:
-                image.naturalWidth ||
-                Math.round(image.getBoundingClientRect().width),
-              height:
-                image.naturalHeight ||
-                Math.round(image.getBoundingClientRect().height),
-              sourceNodeId,
-              sourceNodeType,
-              role:
-                image.alt === "referenceImage"
-                  ? `${role}-reference`
-                  : `${role}-output`
-            };
-            if (includeImageData) {
-              const captured = await captureImage(url);
-              material.dataUrl = captured.dataUrl;
-              material.captureError = captured.error;
-              material.compression = captured.compression;
-            }
-            imageMaterials.push(material);
+            continue;
+          }
+          if (info.media.length) {
+            const referenceNumber = referenceNumberByNodeId.get(info.id);
+            upstreamSummaryParts.push(
+              `[引用图片${referenceNumber ? ` Image ${referenceNumber}` : ""} ${info.id}${info.title ? ` / ${info.title}` : ""}]`
+            );
           }
         }
 
         return {
-          canvasId: location.pathname.split("/").filter(Boolean).pop() || null,
+          canvasId,
           nodeId,
           nodeType,
           prompt,
-          upstreamSummary: upstreamTexts
+          promptSource,
+          promptCandidates,
+          upstreamSummary: upstreamSummaryParts
             .join("\n\n")
             .slice(0, MAX_REVIEW_UPSTREAM_CHARS),
           textMaterials,
           textMaterialSources,
           imageMaterials,
+          nodeInfo: apiFocusInfo,
+          incomingNodes: incomingInfos,
+          incomingConnections,
+          outgoingNodes,
+          outgoingConnections,
+          referenceBindings,
+          snapshot: {
+            source: apiFocusInfo ? "tapnow-api" : "focused-page-dom",
+            endpoint: apiEndpoint || null,
+            nodeCount: apiSnapshot?.nodes.length ?? null,
+            connectionCount: apiSnapshot?.connections.length ?? null,
+            referenceOrderSource: domReferenceOrder.length
+              ? "focused-node-dom"
+              : apiIncomingConnections.length
+                ? "tapnow-api-connections"
+                : relationIncomingIds.length
+                  ? "tapnow-api-relations-fallback"
+                  : apiSnapshot
+                    ? "tapnow-api-connections"
+                    : "dom-edge-order",
+            relationsEndpoint: apiRelationsEndpoint || null,
+            relationsError: apiRelationsError || null,
+            error: apiSnapshotError || null
+          },
           fieldCount: textMaterials.length,
-          source: "focused-page-node"
+          source: apiFocusInfo
+            ? "focused-page-node+tapnow-api"
+            : "focused-page-node"
         };
       }
 
@@ -562,10 +1197,15 @@ export default defineContentScript({
         if (!draft.imageMaterials?.length) return draft;
         const imageMaterials = [];
         for (const image of draft.imageMaterials) {
+          if (image.dataUrl) {
+            imageMaterials.push(image);
+            continue;
+          }
           const captured = await captureImage(image.url);
           imageMaterials.push({
             ...image,
             dataUrl: captured.dataUrl,
+            captureSourceUrl: captured.sourceUrl,
             captureError: captured.error,
             compression: captured.compression
           });
@@ -616,8 +1256,21 @@ export default defineContentScript({
             ? `<div class="llm"><div class="label">LLM 审阅</div><div class="issue"><strong>调用失败</strong><span>${escapeHtml(llmError)}</span></div></div>`
             : "";
         const imageCount = draft.imageMaterials?.length || 0;
+        const referenceImageCount =
+          draft.imageMaterials?.filter(
+            (image) => image.role === "upstream-reference"
+          ).length || 0;
+        const outputImageCount =
+          draft.imageMaterials?.filter(
+            (image) => image.role === "focused-node-output"
+          ).length || 0;
         const uploadable =
           draft.imageMaterials?.filter((image) => image.dataUrl).length || 0;
+        const selectedImageIds = new Set(
+          selectPreparedImages(draft.imageMaterials || []).map(
+            ({ image }) => image.materialId
+          )
+        );
         const payloadStats = reviewPayloadStats(
           draft,
           state.settings.llmIncludeImages
@@ -631,9 +1284,9 @@ export default defineContentScript({
         ];
         const materialSummary = state.settings.llmIncludeImages
           ? imagePreparationAttempted
-            ? `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 可发送图片 ${payloadStats.sentCount} 项 · ${formatBytes(payloadStats.sentImageBytes)}`
-            : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 正在检查图片可发送性`
-          : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项 · 图片发送未开启`;
+            ? `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项（引用 ${referenceImageCount}，产物 ${outputImageCount}） · 可发送图片 ${payloadStats.sentCount} 项 · ${formatBytes(payloadStats.sentImageBytes)}`
+            : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项（引用 ${referenceImageCount}，产物 ${outputImageCount}） · 正在检查图片可发送性`
+          : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项（引用 ${referenceImageCount}，产物 ${outputImageCount}） · 图片发送未开启`;
         const imageNotice = state.settings.llmIncludeImages
           ? imagePreparationAttempted
             ? `${captureErrors.length ? captureErrors.join(" ") + " " : ""}图片仅在本地完成预检；点击“检测”才会按总请求预算发送。${payloadStats.omittedCount ? ` 有 ${payloadStats.omittedCount} 项因预算未发送。` : ""}`
@@ -645,9 +1298,18 @@ export default defineContentScript({
           nodeType: draft.nodeType || null,
           source: draft.source || null,
           prompt: draft.prompt || "",
+          promptSource: draft.promptSource || null,
+          promptCandidates: draft.promptCandidates || [],
           upstreamSummary: draft.upstreamSummary || "",
           textMaterials: draft.textMaterials || [],
           textMaterialSources: draft.textMaterialSources || [],
+          nodeInfo: draft.nodeInfo || null,
+          incomingNodes: draft.incomingNodes || [],
+          incomingConnections: draft.incomingConnections || [],
+          outgoingNodes: draft.outgoingNodes || [],
+          outgoingConnections: draft.outgoingConnections || [],
+          referenceBindings: draft.referenceBindings || [],
+          snapshot: draft.snapshot || null,
           images: (draft.imageMaterials || []).map((image) => ({
             materialId: image.materialId || null,
             url: image.url,
@@ -656,8 +1318,13 @@ export default defineContentScript({
             height: image.height || null,
             sourceNodeId: image.sourceNodeId || null,
             sourceNodeType: image.sourceNodeType || null,
+            sourceTitle: image.sourceTitle || null,
             role: image.role || null,
+            reference: image.reference || null,
+            referenceIndex: image.referenceIndex || null,
+            captureSourceUrl: image.captureSourceUrl || null,
             prepared: Boolean(image.dataUrl),
+            selectedForRequest: selectedImageIds.has(image.materialId),
             preparedBytes: image.dataUrl
               ? Math.round((image.dataUrl.length * 3) / 4)
               : 0,
@@ -715,10 +1382,13 @@ export default defineContentScript({
           },
           llm: llm
             ? {
-                called: llmCalled,
+              called: llmCalled,
                 model: llm.model,
                 decision: llm.decision,
-                summary: llm.summary
+                summary: llm.summary,
+                issues: llm.issues,
+                suggestions: llm.suggestions,
+                requestStats: llm.requestStats || null
               }
             : { called: llmCalled, error: llmError || null }
         };

@@ -16,7 +16,7 @@ npm run extension:build
 `.output/chrome-mv3/`。
 
 普通试用用户不需要构建源码，直接使用
-`releases/tapnow-companion-0.1.9-chrome.zip`，解压后在
+`releases/tapnow-companion-0.1.10-chrome.zip`，解压后在
 `chrome://extensions` 中选择“加载已解压的扩展程序”。完整步骤见
 `releases/README.md`。
 
@@ -33,6 +33,8 @@ npm run extension:build
 - 以配置页中的可编辑短提示词请求 JSON 结构化审阅结果。
 - 读取焦点节点的直接入边文字和图片素材；检测期间使用稳定快照，不因 TapNow
   重渲染丢失节点或素材。
+- 读取当前节点及其直接入边、出边的稳定 API 数据；节点数据快照会在开发者信息
+  中展示，便于后续做下载、追溯和团队建议。
 - 为每张图片发送明确的 `image-1`、`image-2` 编号，并区分节点输出图与参考图。
 - 页面显示的 `small/thumbnail` 变体会还原为原始媒体地址后再准备和发送，减少视觉
   审阅因缩略图造成的精度损失。
@@ -65,9 +67,19 @@ Chrome 账号。
   "prompt": "...",
   "upstream_context": "...",
   "text_materials": [],
-  "image_materials": []
+  "image_materials": [],
+  "focus_node": {},
+  "incoming_nodes": [],
+  "incoming_connections": [],
+  "outgoing_nodes": [],
+  "outgoing_connections": [],
+  "reference_bindings": []
 }
 ```
+
+边界规则：`focus_node.prompt` 是当前节点输入，`focus_node.text` 是当前节点
+产物；上游 Text 节点只把 `text` 作为本次节点的文字素材，不把上游人工
+`prompt` 混进来。页面 DOM 只在 API 不可用时作为备用来源。
 
 容量策略：
 

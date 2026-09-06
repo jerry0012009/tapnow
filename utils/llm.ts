@@ -1,7 +1,8 @@
 import type {
   ReviewDecision,
   ReviewDraft,
-  ReviewIssue
+  ReviewIssue,
+  ReviewNodeInfo
 } from "./reviewer";
 import { DEFAULT_LLM_PROMPT } from "./reviewer";
 import {
@@ -15,7 +16,7 @@ import {
   MAX_REVIEW_UPSTREAM_CHARS,
   MAX_LLM_PROMPT_LENGTH,
   preparedImageStats,
-  selectPreparedImageUrls
+  selectPreparedImages
 } from "./limits";
 
 export interface LlmReview {
@@ -75,6 +76,25 @@ const REVIEW_SCHEMA = {
   required: ["decision", "summary", "issues", "suggestions"]
 } as const;
 
+function compactValue(value: unknown, depth = 0): unknown {
+  if (value == null || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") return value.slice(0, 8_000);
+  if (depth >= 4) return "[nested data omitted]";
+  if (Array.isArray(value)) {
+    return value.slice(0, 32).map((item) => compactValue(item, depth + 1));
+  }
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 64)
+        .map(([key, item]) => [key, compactValue(item, depth + 1)])
+    );
+  }
+  return String(value).slice(0, 8_000);
+}
+
 function compactDraft(draft: ReviewDraft): string {
   const prompt = String(draft.prompt ?? "").slice(
     0,
@@ -113,11 +133,52 @@ function compactDraft(draft: ReviewDraft): string {
     materialBudget -= text.length;
   }
 
+  const compactNode = (node: ReviewNodeInfo | null | undefined) =>
+    node
+      ? {
+          id: node.id,
+          canvas_id: node.canvasId,
+          node_type: node.nodeType,
+          data_type: node.dataType,
+          title: node.title,
+          short_id: node.shortId,
+          data: compactValue(node.data),
+          prompt: node.prompt.slice(0, 20_000),
+          text: node.text.slice(0, 20_000),
+          params: node.params,
+          media: node.media.slice(0, MAX_REVIEW_IMAGE_MATERIALS).map((media) => ({
+            url: media.url.slice(0, 2_000),
+            width: media.width ?? null,
+            height: media.height ?? null
+          })),
+          task_status: node.taskStatus,
+          position: node.position,
+          measured: node.measured,
+          dimensions: node.dimensions,
+          parent_id: node.parentId,
+          extent: node.extent,
+          source_position: node.sourcePosition,
+          target_position: node.targetPosition,
+          session_id: node.sessionId,
+          created_by: node.createdBy,
+          created_by_role: node.createdByRole,
+          created_at: node.createdAt,
+          updated_at: node.updatedAt
+        }
+      : null;
+
   return JSON.stringify({
     canvas_id: draft.canvasId ?? null,
     node_id: draft.nodeId ?? null,
     node_type: draft.nodeType ?? null,
     prompt,
+    prompt_source: draft.promptSource ?? null,
+    prompt_candidates: (draft.promptCandidates || []).map((candidate) => ({
+      source: candidate.source,
+      value: candidate.value.slice(0, MAX_REVIEW_PROMPT_CHARS),
+      selected: candidate.selected,
+      ignored_reason: candidate.ignoredReason ?? null
+    })),
     upstream_context: upstream,
     text_materials: textMaterials.map((text, index) => {
       const source = draft.textMaterialSources?.[index];
@@ -129,6 +190,50 @@ function compactDraft(draft: ReviewDraft): string {
         role: source?.role ?? "connected-text"
       };
     }),
+    focus_node: compactNode(draft.nodeInfo),
+    incoming_nodes: (draft.incomingNodes || [])
+      .slice(0, MAX_REVIEW_TEXT_MATERIALS)
+      .map(compactNode),
+    incoming_connections: (draft.incomingConnections || [])
+      .slice(0, MAX_REVIEW_TEXT_MATERIALS)
+      .map((connection) => ({
+        id: connection.id,
+        source: connection.source,
+        target: connection.target,
+        source_handle: connection.sourceHandle,
+        target_handle: connection.targetHandle,
+        label: connection.label
+      })),
+    outgoing_nodes: (draft.outgoingNodes || [])
+      .slice(0, MAX_REVIEW_TEXT_MATERIALS)
+      .map(compactNode),
+    outgoing_connections: (draft.outgoingConnections || [])
+      .slice(0, MAX_REVIEW_TEXT_MATERIALS)
+      .map((connection) => ({
+        id: connection.id,
+        source: connection.source,
+        target: connection.target,
+        source_handle: connection.sourceHandle,
+        target_handle: connection.targetHandle,
+        label: connection.label
+      })),
+    reference_bindings: (draft.referenceBindings || []).slice(
+      0,
+      MAX_REVIEW_IMAGE_MATERIALS
+    ),
+    snapshot: draft.snapshot
+      ? {
+          source: draft.snapshot.source,
+          endpoint: draft.snapshot.endpoint ?? null,
+          node_count: draft.snapshot.nodeCount ?? null,
+          connection_count: draft.snapshot.connectionCount ?? null,
+          reference_order_source:
+            draft.snapshot.referenceOrderSource ?? null,
+          relations_endpoint: draft.snapshot.relationsEndpoint ?? null,
+          relations_error: draft.snapshot.relationsError ?? null,
+          error: draft.snapshot.error ?? null
+        }
+      : null,
     image_materials: (draft.imageMaterials || [])
       .slice(0, MAX_REVIEW_IMAGE_MATERIALS)
       .map((item, index) => ({
@@ -140,7 +245,11 @@ function compactDraft(draft: ReviewDraft): string {
         height: item.height || null,
         source_node_id: item.sourceNodeId ?? null,
         source_node_type: item.sourceNodeType ?? null,
+        source_title: item.sourceTitle ?? null,
         role: item.role ?? "connected-image",
+        reference: item.reference ?? null,
+        reference_index: item.referenceIndex ?? null,
+        capture_source_url: item.captureSourceUrl ?? null,
         uploadable: Boolean(item.dataUrl),
         compression: item.compression
           ? {
@@ -154,21 +263,31 @@ function compactDraft(draft: ReviewDraft): string {
   });
 }
 
-function imageUrls(draft: ReviewDraft, includeImages: boolean): string[] {
+function selectedImages(draft: ReviewDraft, includeImages: boolean) {
   if (!includeImages) return [];
-  return selectPreparedImageUrls(draft.imageMaterials);
+  return selectPreparedImages(draft.imageMaterials || []);
+}
+
+function imageMarker(
+  image: NonNullable<ReviewDraft["imageMaterials"]>[number],
+  index: number
+): string {
+  const materialId = image.materialId || `image-${index + 1}`;
+  const reference = image.reference ? `，提示词引用 ${image.reference}` : "";
+  const source = image.sourceNodeId ? `，来源节点 ${image.sourceNodeId}` : "";
+  return `下面是 ${materialId}${reference}${source}，必须按此标识审阅：`;
 }
 
 function userContent(draft: ReviewDraft, includeImages: boolean) {
   const text = compactDraft(draft);
   return [
     { type: "text", text },
-    ...imageUrls(draft, includeImages).flatMap((url, index) => [
+    ...selectedImages(draft, includeImages).flatMap(({ image, index, dataUrl }) => [
       {
         type: "text",
-        text: `下面是 image-${index + 1}（对应 image_materials 中的第 ${index + 1} 项，按顺序审阅）：`
+        text: imageMarker(image, index)
       },
-      { type: "image_url", image_url: { url } }
+      { type: "image_url", image_url: { url: dataUrl } }
     ])
   ];
 }
@@ -178,13 +297,15 @@ function responseInput(draft: ReviewDraft, includeImages: boolean) {
     role: "user",
     content: [
       { type: "input_text", text: compactDraft(draft) },
-      ...imageUrls(draft, includeImages).flatMap((url, index) => [
-        {
-          type: "input_text",
-          text: `下面是 image-${index + 1}（对应 image_materials 中的第 ${index + 1} 项，按顺序审阅）：`
-        },
-        { type: "input_image", image_url: url }
-      ])
+      ...selectedImages(draft, includeImages).flatMap(
+        ({ image, index, dataUrl }) => [
+          {
+            type: "input_text",
+            text: imageMarker(image, index)
+          },
+          { type: "input_image", image_url: dataUrl }
+        ]
+      )
     ]
   }];
 }

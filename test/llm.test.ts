@@ -8,6 +8,7 @@ import {
   MAX_REVIEW_TEXT_CHARS,
   preparedImageStats
 } from "../utils/limits";
+import { toReviewNodeInfo } from "../utils/tapnow";
 
 test("builds bounded JSON input for an LLM review", () => {
   const input = llmInternals.compactDraft({
@@ -131,6 +132,58 @@ test("preserves image compression metadata in the review payload", () => {
   });
 });
 
+test("includes complete focus and outgoing node context in the review payload", () => {
+  const focus = toReviewNodeInfo({
+    id: "image-focus",
+    canvas_id: "canvas-1",
+    type: "image",
+    created_by: "user-1",
+    created_by_role: "user",
+    data: {
+      prompt: "检查",
+      text: "",
+      params: { model: "nano-banana-flash" },
+      cameraControl: { enabled: true },
+      title: "当前图片",
+      type: "generate"
+    }
+  });
+  const next = toReviewNodeInfo({
+    id: "video-next",
+    canvas_id: "canvas-1",
+    type: "video",
+    data: {
+      prompt: "继续",
+      text: "",
+      params: { model: "video-model" },
+      title: "后续节点",
+      type: "generate"
+    }
+  });
+  assert.ok(focus);
+  assert.ok(next);
+  const parsed = JSON.parse(
+    llmInternals.compactDraft({
+      prompt: "检查",
+      nodeInfo: focus,
+      outgoingNodes: [next],
+      outgoingConnections: [
+        {
+          id: "connection-1",
+          source: "image-focus",
+          target: "video-next",
+          sourceHandle: "right",
+          targetHandle: "left",
+          label: ""
+        }
+      ]
+    })
+  );
+  assert.equal(parsed.focus_node.data.cameraControl.enabled, true);
+  assert.equal(parsed.outgoing_nodes[0].id, "video-next");
+  assert.equal(parsed.outgoing_connections[0].target, "video-next");
+});
+
 test("sends multiple prepared images and skips unprepared images", () => {
   const image = (name: string) => ({
     url: `https://example.com/${name}.png`,
@@ -141,6 +194,32 @@ test("sends multiple prepared images and skips unprepared images", () => {
     true
   );
   assert.equal(content.filter((part: any) => part.type === "image_url").length, 2);
+});
+
+test("keeps original image ids when an earlier image is not prepared", () => {
+  const content = llmInternals.userContent(
+    {
+      prompt: "按引用顺序审阅",
+      imageMaterials: [
+        {
+          materialId: "image-1",
+          url: "https://example.com/one.png"
+        },
+        {
+          materialId: "image-2",
+          url: "https://example.com/two.png",
+          reference: "Image 2",
+          sourceNodeId: "source-two",
+          dataUrl: "data:image/png;base64,ZmFrZQ=="
+        }
+      ]
+    },
+    true
+  );
+  assert.match(content[1].text, /image-2/);
+  assert.match(content[1].text, /Image 2/);
+  assert.match(content[1].text, /source-two/);
+  assert.equal(content[2].image_url.url, "data:image/png;base64,ZmFrZQ==");
 });
 
 test("allows more than four small prepared images", () => {

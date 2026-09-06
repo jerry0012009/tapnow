@@ -21,7 +21,7 @@
 [examples/canvas-export-TEST-0903](examples/canvas-export-TEST-0903/README.md)。
 
 个人试用的最小 Chrome 副驾驶扩展见
-[安装包说明](releases/README.md)：用户下载 ZIP、解压并在 Chrome 扩展页加载，
+[安装包说明](releases/README.md)：用户下载 0.1.10 ZIP、解压并在 Chrome 扩展页加载，
 不需要 Node.js 或 npm。WXT 源码在 `wxt.config.ts`、`entrypoints/` 和
 `utils/`，也可以在扩展后台通过 Responses 或 Chat Completions 调用 OpenAI/ACU
 审阅当前 focus 节点的文字和可选图片素材；插件不拦截运行请求。
@@ -117,6 +117,11 @@ npm run extension:dev
 ACU Router 默认 32 MB 请求体留出余量：图片 data URL 总预算为 20 MB，
 整体请求体安全预算为 28 MB。小图可以同时发送多张，超出预算的图片会在
 开发者信息中标明，不会静默伪装成已发送。
+
+节点边界按 TapNow API 字段处理：当前节点的 `data.prompt` 是本次输入，
+`data.text` 是当前产物；直接上游 Text 节点只提供 `data.text`，上游人工
+`data.prompt` 不会混入本次提示词。开发者信息同时保留 prompt 候选值、选择
+来源、忽略原因，以及当前节点的入边和出边。
 
 ACU 随附的模型目录将 `acu-auto`、`gpt-5.6-luna`、`gpt-5.6-terra` 和
 `gpt-5.6-sol` 标为 272,000 tokens 上下文窗口。插件按约 200,000 字符

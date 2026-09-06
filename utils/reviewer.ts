@@ -10,11 +10,66 @@ export interface ReviewIssue {
   detail: string;
 }
 
+export interface ReviewNodeInfo {
+  id: string;
+  canvasId: string | null;
+  nodeType: string | null;
+  dataType: string | null;
+  title: string | null;
+  shortId: string | null;
+  data: Record<string, unknown>;
+  prompt: string;
+  text: string;
+  params: Record<string, unknown> | null;
+  media: Array<{
+    url: string;
+    width?: number | null;
+    height?: number | null;
+  }>;
+  taskStatus: string | null;
+  position: { x: number | null; y: number | null };
+  measured: { width: number | null; height: number | null };
+  dimensions: { width: number | null; height: number | null };
+  parentId: string | null;
+  extent: string | null;
+  sourcePosition: string | null;
+  targetPosition: string | null;
+  sessionId: string | null;
+  createdBy: string | null;
+  createdByRole: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface ReviewConnectionInfo {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle: string | null;
+  targetHandle: string | null;
+  label: string;
+}
+
+export interface ReviewReferenceBinding {
+  reference: string;
+  materialId: string | null;
+  sourceNodeId: string | null;
+  sourceTitle: string | null;
+  resolved: boolean;
+}
+
 export interface ReviewDraft {
   canvasId?: string | null;
   nodeId?: string | null;
   nodeType?: string | null;
   prompt?: string;
+  promptSource?: string | null;
+  promptCandidates?: Array<{
+    source: string;
+    value: string;
+    selected: boolean;
+    ignoredReason?: string | null;
+  }>;
   upstreamSummary?: string;
   textMaterials?: string[];
   textMaterialSources?: Array<{
@@ -30,7 +85,11 @@ export interface ReviewDraft {
     height?: number;
     sourceNodeId?: string | null;
     sourceNodeType?: string | null;
+    sourceTitle?: string | null;
     role?: string;
+    reference?: string | null;
+    referenceIndex?: number | null;
+    captureSourceUrl?: string;
     dataUrl?: string;
     captureError?: string;
     compression?: {
@@ -40,6 +99,22 @@ export interface ReviewDraft {
       preparedBytes?: number | null;
     };
   }>;
+  nodeInfo?: ReviewNodeInfo | null;
+  incomingNodes?: ReviewNodeInfo[];
+  incomingConnections?: ReviewConnectionInfo[];
+  outgoingNodes?: ReviewNodeInfo[];
+  outgoingConnections?: ReviewConnectionInfo[];
+  referenceBindings?: ReviewReferenceBinding[];
+  snapshot?: {
+    source: "tapnow-api" | "focused-page-dom";
+    endpoint?: string | null;
+    nodeCount?: number | null;
+    connectionCount?: number | null;
+    referenceOrderSource?: string | null;
+    relationsEndpoint?: string | null;
+    relationsError?: string | null;
+    error?: string | null;
+  };
   fieldCount?: number;
   source?: string;
 }
@@ -65,7 +140,10 @@ export interface ReviewSettings {
 
 export const DEFAULT_LLM_PROMPT = [
   "审阅一个创作节点，帮助用户在运行前发现质量、上下文和团队风格问题。",
-  "用户消息中的 image-1、image-2 等文字标记紧跟对应图片，必须按编号引用图片，不要混淆素材。",
+  "用户消息中的 image-1、image-2 等文字标记紧跟对应图片，必须按编号引用图片，不要混淆素材；reference_bindings 是提示词中的 Image N 与实际素材的对应关系。",
+  "focus_node.prompt 是当前节点输入，focus_node.text 是当前节点生成产物；上游 text 节点只使用其生成产物 text，不要把上游人工 prompt 当成本次输入。",
+  "当 prompt_source 为 direct-upstream-text-output 时，prompt 是直接上游 Text 节点的生成产物；不要把 prompt_candidates 中被标记为忽略的哈希、UUID 或人工输入当作本次提示词。",
+  "incoming_nodes 和 incoming_connections 是当前节点的直接关系；outgoing_nodes 和 outgoing_connections 是当前节点的后续关系。",
   "只输出符合 JSON schema 的结果；不要改写原提示词，不要编造未提供的上下文。",
   "decision 只能是 allow、warn、block；普通质量问题用 warn，明显无法运行或违反规则用 block。"
 ].join(" ");

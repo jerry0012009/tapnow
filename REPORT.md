@@ -297,3 +297,100 @@ Console 诊断包含当前 focus、节点 ID/类型、输入、上下文、文�
 
 仓库中的 `export-canvas.mjs` 已实现该流程，`record-session.mjs` 用于动态请求
 记录，`audit-canvas.mjs` 用于未登录基线检查。
+
+## 13. Companion 0.1.10 真实页面回归
+
+测试日期：2026-09-06（Europe/Berlin）。
+
+本轮继续使用真实 Chrome 151、真实 TapNow 页面和真实扩展构建目录，没有使用
+Mock 页面或伪造节点数据。当前可访问的真实画布为：
+
+```text
+https://app.tapnow.ai/canvas/8b18df2d-7254-4a17-8837-718081d6e7c4
+```
+
+### 13.1 三图引用节点
+
+节点 `image-fd8c0be4-1edb-40b3-bd4d-28aff976213f` 的真实 API 数据包含
+三个直接入边，提示词引用 `Image 1`、`Image 2`、`Image 3`。插件实际读取并绑定：
+
+```text
+Image 1 -> image-dcef2e6e-5535-4768-9f9a-411c783f3fa8 / 正脸证件照
+Image 2 -> image-b9b1800d-6e5a-4976-acad-59069f84af73 / 图片生成
+Image 3 -> image-c9795845-d673-4c36-971b-d3d888cc42f6 / 穿衣服-正脸
+```
+
+三张参考图均成功读取。当前节点还有一张历史产物图，因此本地素材列表共
+四项，开发者信息会区分“引用图”和“当前节点产物图”。由于三张参考图已经
+占用大部分请求预算，本轮实际发送三张参考图，产物图被预算选择器明确标为
+未发送，而不是错误地改名或冒充已发送。
+
+点击“检测”后，真实 ACU Responses 请求返回 HTTP 200，模型能够在结果中正确
+引用 `Image 1`、`Image 2`、`Image 3`，并给出结构化质量建议。实际请求体约
+16.6 MB，三张图片原始发送数据约 12.5 MB。
+
+### 13.2 当前节点与上游边界
+
+读取规则现在明确分开：
+
+- 当前节点的 `data.prompt` 是当前节点输入。
+- 当前节点的 `data.text` 是当前节点生成产物。
+- 直接上游 Text 节点只把 `data.text` 放入 `textMaterials`。
+- 上游 Text 节点的 `data.prompt` 不会作为本次节点提示词。
+- 32 位内部哈希和 UUID 候选值会保留在开发者信息中，但标为忽略，不会作为
+  有效提示词发送给 LLM。
+
+这样可以避免页面 DOM 把“上游人工提示词 + 上游生成产物 + 模型控件文本”拼接
+成一段内容时污染本次生图审阅。API 可用时以 API 字段为权威，DOM 仅作为
+备用来源。
+
+### 13.3 节点关系和透明度
+
+0.1.10 的审阅草稿和开发者信息新增：
+
+- 当前节点完整的稳定 API 数据快照及字段。
+- `incoming_nodes`、`incoming_connections`。
+- `outgoing_nodes`、`outgoing_connections`。
+- 每个提示词候选值、选择结果和忽略原因。
+- 每张图片的来源节点、引用编号、角色、原始地址、实际抓取地址、准备状态、
+  压缩信息和是否被本次请求选中。
+
+打开面板或点击检测都不会拦截 TapNow 的生成动作；只有点击“检测”才会请求
+LLM。已经准备好的图片会在检测时复用，避免重复下载。
+
+### 13.4 引用顺序稳定性修复
+
+真实接口探测发现，`/nodes?include_relations=true` 对同一节点的
+`relations[node].incoming` 顺序并不稳定：连续请求会返回不同排列；而画布详情
+接口中的 `connections` 顺序保持稳定。0.1.10 已改为：
+
+1. 当前节点 DOM 中存在明确的引用图顺序时，使用 DOM 顺序。
+2. 否则使用画布详情接口的 `connections` 顺序。
+3. 只有没有可用 connections 时，才把 relations 顺序作为兜底，并在开发者信息
+   中标明 `tapnow-api-relations-fallback`。
+
+重载真实 Chrome 后，三图节点 `image-fd8c0be4-1edb-40b3-bd4d-28aff976213f`
+的开发者信息显示 `referenceOrderSource: tapnow-api-connections`，并稳定绑定：
+
+```text
+Image 1 -> image-dcef2e6e-5535-4768-9f9a-411c783f3fa8 / 正脸证件照
+Image 2 -> image-b9b1800d-6e5a-4976-acad-59069f84af73 / 图片生成
+Image 3 -> image-c9795845-d673-4c36-971b-d3d888cc42f6 / 穿衣服-正脸
+```
+
+### 13.5 回归结果
+
+| 测试 | 结果 |
+| --- | --- |
+| 真实 API 读取 102 个节点、78 条连线 | 通过 |
+| 两图节点引用顺序与来源绑定 | 通过 |
+| 三图节点 `Image 1/2/3` 绑定 | 通过 |
+| 三图真实图片准备 | 通过 |
+| 三图真实 ACU Responses 审阅 | 通过，HTTP 200 |
+| 当前节点产物图与引用图区分 | 通过 |
+| 上游 Text 的 prompt/text 边界 | 已由 API 字段规则和自动回归覆盖 |
+| 32 位哈希不作为有效提示词 | 通过自动回归 |
+| 节点数据与出入边透明展示 | 通过，真实页面重载后验证 |
+| relations 顺序变化不影响 `Image N` 映射 | 通过，改用稳定 connections 顺序 |
+| 单元/协议/重试测试 | 31/31 通过 |
+| WXT production build | 通过 |

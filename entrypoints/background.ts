@@ -65,16 +65,38 @@ export default defineBackground(() => {
           source.protocol !== "https:" ||
           !(
             source.hostname === "app.tapnow.ai" ||
-            source.hostname.endsWith(".tapnow.media")
+            source.hostname.endsWith(".tapnow.media") ||
+            source.hostname.endsWith(".tapnow.top")
           )
         ) {
           return { ok: false, error: "图片来源域名不在允许范围内。" };
         }
-        const response = await fetch(source, {
-          headers: { Referer: "https://app.tapnow.ai/" }
-        });
-        if (!response.ok) {
-          return { ok: false, error: `图片请求失败 HTTP ${response.status}` };
+        const candidates = [source];
+        if (source.hostname === "files.tapnow.top") {
+          const mediaSource = new URL(source.toString());
+          mediaSource.hostname = "files.tapnow.media";
+          candidates.push(mediaSource);
+        }
+        let response: Response | null = null;
+        let sourceUrl = source.toString();
+        let lastError = "";
+        for (const candidate of candidates) {
+          sourceUrl = candidate.toString();
+          try {
+            const candidateResponse = await fetch(candidate, {
+              headers: { Referer: "https://app.tapnow.ai/" }
+            });
+            if (candidateResponse.ok) {
+              response = candidateResponse;
+              break;
+            }
+            lastError = `图片请求失败 HTTP ${candidateResponse.status}`;
+          } catch (error) {
+            lastError = error instanceof Error ? error.message : String(error);
+          }
+        }
+        if (!response) {
+          return { ok: false, error: lastError || "图片请求失败。" };
         }
         const contentType = response.headers.get("content-type") || "image/jpeg";
         if (!contentType.startsWith("image/")) {
@@ -85,12 +107,13 @@ export default defineBackground(() => {
           const compressed = await compressImage(bytes, contentType);
           if (!compressed) {
             return {
-              ok: false,
-              error: `原图超过 ${MAX_SINGLE_IMAGE_BYTES / 1_000_000} MB，压缩后仍无法控制在发送上限内。`
+            ok: false,
+            error: `原图超过 ${MAX_SINGLE_IMAGE_BYTES / 1_000_000} MB，压缩后仍无法控制在发送上限内。`
             };
           }
           return {
             ok: true,
+            sourceUrl,
             dataUrl: `data:image/jpeg;base64,${bytesToBase64(compressed.bytes)}`,
             compression: {
               applied: true,
@@ -102,6 +125,7 @@ export default defineBackground(() => {
         }
         return {
           ok: true,
+          sourceUrl,
           dataUrl: `data:${contentType.split(";")[0]};base64,${bytesToBase64(bytes)}`,
           compression: {
             applied: false,
