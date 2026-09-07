@@ -16,6 +16,10 @@ export const MAX_REVIEW_REQUEST_BYTES = 28_000_000;
 export const MAX_IMAGE_DATA_URL_CHARS = 20_000_000;
 export const MAX_SINGLE_IMAGE_BYTES = 8_000_000;
 export const MAX_REVIEW_IMAGE_MATERIALS = 32;
+// ACU can legitimately spend more than two minutes in routing/provider
+// retries before returning the final Responses event. Keep the client deadline
+// above the observed production latency while still guaranteeing termination.
+export const LLM_REQUEST_TIMEOUT_MS = 300_000;
 
 export function dataUrlByteLength(dataUrl: string): number {
   const comma = dataUrl.indexOf(",");
@@ -30,7 +34,10 @@ export function selectPreparedImageUrls(
 }
 
 export function selectPreparedImages<
-  T extends { dataUrl?: string } = { dataUrl?: string }
+  T extends { dataUrl?: string; role?: string } = {
+    dataUrl?: string;
+    role?: string;
+  }
 >(
   images: T[] = []
 ): Array<{ image: T; index: number; dataUrl: string }> {
@@ -40,6 +47,7 @@ export function selectPreparedImages<
   for (const [index, image] of images
     .slice(0, MAX_REVIEW_IMAGE_MATERIALS)
     .entries()) {
+    if (image.role === "focused-node-output") continue;
     const dataUrl = image.dataUrl;
     if (!dataUrl || !/^data:image\//i.test(dataUrl)) continue;
     if (usedChars + dataUrl.length > MAX_IMAGE_DATA_URL_CHARS) continue;
@@ -55,6 +63,7 @@ export function preparedImageStats(
 ) {
   const prepared = images
     .slice(0, MAX_REVIEW_IMAGE_MATERIALS)
+    .filter((image) => image.role !== "focused-node-output")
     .map((image) => image.dataUrl)
     .filter(
       (dataUrl): dataUrl is string =>

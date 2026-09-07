@@ -15,9 +15,52 @@ import {
   MAX_REVIEW_TEXT_MATERIALS,
   MAX_REVIEW_UPSTREAM_CHARS,
   MAX_LLM_PROMPT_LENGTH,
+  LLM_REQUEST_TIMEOUT_MS,
   preparedImageStats,
   selectPreparedImages
 } from "./limits";
+
+export interface LlmRequestDiagnostics {
+  phase:
+    | "started"
+    | "http_response"
+    | "reading_response"
+    | "parsing_response"
+    | "completed"
+    | "failed"
+    | "timeout";
+  endpoint: string;
+  protocol: LlmSettings["protocol"];
+  model: string;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs: number;
+  attempts: number;
+  responseStatus?: number | null;
+  responseContentType?: string | null;
+  responseBytes?: number;
+  requestBytes?: number;
+  responseMode?: "json" | "sse" | "unknown";
+  terminalEvent?: string | null;
+  firstByteMs?: number | null;
+  terminalEventMs?: number | null;
+  connectionClosedMs?: number | null;
+  clientRequestId?: string;
+  responseRequestId?: string | null;
+  timedOut?: boolean;
+  fallbackUsed?: boolean;
+  error?: string;
+}
+
+export class LlmRequestError extends Error {
+  constructor(
+    message: string,
+    readonly diagnostics: LlmRequestDiagnostics
+  ) {
+    super(message);
+    this.name = "LlmRequestError";
+  }
+}
 
 export interface LlmReview {
   decision: ReviewDecision;
@@ -28,6 +71,23 @@ export interface LlmReview {
   model: string;
   requestStats: ReturnType<typeof reviewPayloadStats> & {
     requestBytes: number;
+    endpoint: string;
+    protocol: LlmSettings["protocol"];
+    startedAt: string;
+    finishedAt: string;
+    durationMs: number;
+    attempts: number;
+    responseStatus: number | null;
+    responseContentType: string | null;
+    responseBytes: number;
+    responseMode: "json" | "sse" | "unknown";
+    terminalEvent: string | null;
+    firstByteMs: number | null;
+    terminalEventMs: number | null;
+    connectionClosedMs: number | null;
+    fallbackUsed: boolean;
+    clientRequestId: string;
+    responseRequestId: string | null;
   };
 }
 
@@ -44,6 +104,8 @@ interface LlmRequestOptions {
   fetchImpl?: typeof fetch;
   allowTestEndpoint?: boolean;
   retryDelayMs?: number;
+  timeoutMs?: number;
+  clientRequestId?: string;
 }
 
 const SYSTEM_PROMPT = DEFAULT_LLM_PROMPT;
@@ -454,6 +516,197 @@ function retryableFailure(status: number, raw: string): boolean {
   );
 }
 
+function terminalResponsesEvent(raw: string): string | null {
+  for (const block of raw.split(/\r?\n\r?\n/)) {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+    if (!data) continue;
+    if (data === "[DONE]") return "[DONE]";
+    try {
+      const payload = JSON.parse(data);
+      if (
+        payload.type === "response.completed" ||
+        payload.type === "response.done" ||
+        payload.type === "response.failed" ||
+        payload.type === "error"
+      ) {
+        return String(payload.type);
+      }
+    } catch {
+      // Wait for the rest of a split SSE event.
+    }
+  }
+  return null;
+}
+
+function hasTerminalResponsesEvent(raw: string): boolean {
+  return terminalResponsesEvent(raw) !== null;
+}
+
+function responseRequestIdFromRaw(raw: string): string | null {
+  try {
+    const payload = JSON.parse(raw);
+    return typeof payload?.id === "string"
+      ? payload.id
+      : typeof payload?.response?.id === "string"
+        ? payload.response.id
+        : null;
+  } catch {
+    for (const block of raw.split(/\r?\n\r?\n/)) {
+      const data = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n")
+        .trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const payload = JSON.parse(data);
+        if (typeof payload?.response?.id === "string") {
+          return payload.response.id;
+        }
+      } catch {
+        // Ignore incomplete or non-JSON SSE blocks.
+      }
+    }
+  }
+  return null;
+}
+
+interface ResponseReadResult {
+  raw: string;
+  mode: "json" | "sse" | "unknown";
+  terminalEvent: string | null;
+  firstByteMs: number | null;
+  terminalEventMs: number | null;
+  connectionClosedMs: number | null;
+}
+
+async function responseTextWithTimeout(
+  response: Response,
+  timeoutMs: number,
+  controller: AbortController
+): Promise<ResponseReadResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const contentTypeIsEventStream = /text\/event-stream/i.test(
+    response.headers.get("content-type") || ""
+  );
+  try {
+    if (response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let raw = "";
+      const readStartedAt = Date.now();
+      let firstByteMs: number | null = null;
+      let terminalEvent: string | null = null;
+      let terminalEventMs: number | null = null;
+      let mode: ResponseReadResult["mode"] = contentTypeIsEventStream
+        ? "sse"
+        : "unknown";
+      const readStream = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              raw += decoder.decode();
+              return {
+                raw,
+                mode: mode === "unknown" && raw.trim() ? "json" : mode,
+                terminalEvent,
+                firstByteMs,
+                terminalEventMs,
+                connectionClosedMs: Date.now() - readStartedAt
+              };
+            }
+            if (firstByteMs === null) {
+              firstByteMs = Date.now() - readStartedAt;
+            }
+            raw += decoder.decode(value, { stream: true });
+            const trimmed = raw.trimStart();
+            if (
+              mode === "unknown" &&
+              (trimmed.startsWith(":") ||
+                trimmed.startsWith("event:") ||
+                trimmed.startsWith("data:"))
+            ) {
+              mode = "sse";
+            }
+            if (mode === "sse") {
+              terminalEvent = terminalResponsesEvent(raw);
+            }
+            if (terminalEvent) {
+              terminalEventMs = Date.now() - readStartedAt;
+              await reader.cancel().catch(() => undefined);
+              return {
+                raw,
+                mode,
+                terminalEvent,
+                firstByteMs,
+                terminalEventMs,
+                connectionClosedMs: null
+              };
+            }
+            // Some intermediaries label a complete non-streaming JSON body as
+            // application/json but keep the connection open. Once the body is
+            // valid JSON, no EOF is needed to safely continue parsing it.
+            if (mode === "unknown") {
+              try {
+                JSON.parse(trimmed);
+                await reader.cancel().catch(() => undefined);
+                return {
+                  raw,
+                  mode: "json",
+                  terminalEvent: null,
+                  firstByteMs,
+                  terminalEventMs: null,
+                  connectionClosedMs: null
+                };
+              } catch {
+                // The JSON body is still arriving.
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      };
+      return await Promise.race<ResponseReadResult>([
+        readStream(),
+        new Promise<ResponseReadResult>((_, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            void reader.cancel().catch(() => undefined);
+            reject(new Error("LLM 响应读取超时。"));
+          }, timeoutMs);
+        })
+      ]);
+    }
+    const raw = await Promise.race([
+      response.text(),
+      new Promise<string>((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error("LLM 响应读取超时。"));
+        }, timeoutMs);
+      })
+    ]);
+    return {
+      raw,
+      mode: contentTypeIsEventStream ? "sse" : "unknown",
+      terminalEvent: terminalResponsesEvent(raw),
+      firstByteMs: null,
+      terminalEventMs: null,
+      connectionClosedMs: null
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function reviewWithLlm(
   draft: ReviewDraft,
   settings: LlmSettings,
@@ -462,9 +715,72 @@ export async function reviewWithLlm(
   if (!settings.apiKey) throw new Error("尚未配置 API Key。");
   const baseUrl = assertOpenAiUrl(settings.baseUrl, options.allowTestEndpoint);
   const fetchImpl = options.fetchImpl || fetch;
+  const endpoint =
+    settings.protocol === "chat_completions"
+      ? `${baseUrl}/chat/completions`
+      : `${baseUrl}/responses`;
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
+  const timeoutMs = Math.max(1_000, options.timeoutMs ?? LLM_REQUEST_TIMEOUT_MS);
+  let attempts = 0;
+  let lastResponse: Response | null = null;
+  let lastRaw = "";
+  let fallbackUsed = false;
+  let requestBytes = 0;
+  let responseRead: Omit<ResponseReadResult, "raw"> = {
+    mode: "unknown",
+    terminalEvent: null,
+    firstByteMs: null,
+    terminalEventMs: null,
+    connectionClosedMs: null
+  };
+  const clientRequestId = options.clientRequestId || crypto.randomUUID();
+  const makeDiagnostics = (
+    phase: LlmRequestDiagnostics["phase"],
+    extra: Partial<LlmRequestDiagnostics> = {}
+  ): LlmRequestDiagnostics => ({
+    phase,
+    endpoint,
+    protocol: settings.protocol,
+    model: settings.model,
+    startedAt,
+    durationMs: Date.now() - startedAtMs,
+    attempts,
+    responseStatus: lastResponse?.status ?? null,
+    responseContentType: lastResponse?.headers.get("content-type") ?? null,
+    clientRequestId,
+    responseRequestId:
+      lastResponse?.headers.get("x-request-id") ||
+      lastResponse?.headers.get("request-id") ||
+      lastResponse?.headers.get("x-new-api-request-id") ||
+      responseRequestIdFromRaw(lastRaw),
+    responseBytes: lastRaw
+      ? new TextEncoder().encode(lastRaw).length
+      : 0,
+    requestBytes,
+    ...responseRead,
+    fallbackUsed,
+    ...extra
+  });
+  const requestError = (
+    error: unknown,
+    phase: LlmRequestDiagnostics["phase"] = "failed",
+    timedOut = false
+  ) => {
+    const message = error instanceof Error ? error.message : String(error);
+    return new LlmRequestError(
+      message,
+      makeDiagnostics(phase, {
+        finishedAt: new Date().toISOString(),
+        timedOut,
+        error: message
+      })
+    );
+  };
   const headers = {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${settings.apiKey}`
+    Authorization: `Bearer ${settings.apiKey}`,
+    "X-Client-Request-Id": clientRequestId
   };
   const systemPrompt = String(settings.prompt || DEFAULT_LLM_PROMPT)
     .trim()
@@ -491,7 +807,9 @@ export async function reviewWithLlm(
           model: settings.model,
           instructions: systemPrompt,
           input: responseInput(draft, settings.includeImages),
-          stream: true,
+          // Review output is a small JSON document. Avoid waiting forever for
+          // an SSE terminator that an intermediary may omit.
+          stream: false,
           text: {
             format: {
               type: "json_schema",
@@ -502,7 +820,7 @@ export async function reviewWithLlm(
           }
         };
 
-  const requestBytes = new TextEncoder().encode(JSON.stringify(body)).length;
+  requestBytes = new TextEncoder().encode(JSON.stringify(body)).length;
   if (requestBytes > MAX_REVIEW_REQUEST_BYTES) {
     throw new Error(
       `LLM 请求体约 ${(requestBytes / 1_000_000).toFixed(1)} MB，超过插件 ` +
@@ -511,37 +829,74 @@ export async function reviewWithLlm(
     );
   }
 
-  const endpoint =
-    settings.protocol === "chat_completions"
-      ? `${baseUrl}/chat/completions`
-      : `${baseUrl}/responses`;
-  const request = (requestBody: Record<string, any>) =>
+  const request = (
+    requestBody: Record<string, any>,
+    signal: AbortSignal
+  ) =>
     fetchImpl(endpoint, {
       method: "POST",
       headers,
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal
     });
   const retryDelayMs = options.retryDelayMs ?? 400;
   const requestWithRetry = async (
     requestBody: Record<string, any>,
     retries: number
   ) => {
-    let response: Response | null = null;
-    let raw = "";
-    for (
-      let attempt = 0;
-      attempt <= retries;
-      attempt++
-    ) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const remainingMs = timeoutMs - (Date.now() - startedAtMs);
+      if (remainingMs <= 0) {
+        throw requestError("LLM 请求超时，已自动终止。", "timeout", true);
+      }
+      attempts++;
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        response = await request(requestBody);
-        raw = await response.text();
+        const responsePromise = request(requestBody, controller.signal);
+        const timeoutPromise = new Promise<Response>((_, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(new Error("LLM 请求超时。"));
+          }, remainingMs);
+        });
+        lastResponse = await Promise.race([responsePromise, timeoutPromise]);
+        if (timer) clearTimeout(timer);
+        const responseReadRemainingMs =
+          timeoutMs - (Date.now() - startedAtMs);
+        if (responseReadRemainingMs <= 0) {
+          controller.abort();
+          throw new Error("LLM 响应读取超时。");
+        }
+        const readResult = await responseTextWithTimeout(
+          lastResponse,
+          responseReadRemainingMs,
+          controller
+        );
+        lastRaw = readResult.raw;
+        responseRead = {
+          mode: readResult.mode,
+          terminalEvent: readResult.terminalEvent,
+          firstByteMs: readResult.firstByteMs,
+          terminalEventMs: readResult.terminalEventMs,
+          connectionClosedMs: readResult.connectionClosedMs
+        };
       } catch (error) {
+        if (timer) clearTimeout(timer);
+        const timedOut =
+          controller.signal.aborted ||
+          /timeout|timed out/i.test(
+            error instanceof Error ? error.message : String(error)
+          );
         if (attempt >= retries) {
-          throw new Error(
-            `LLM 网络请求失败（${endpoint}）：${
-              error instanceof Error ? error.message : String(error)
-            }`
+          throw requestError(
+            timedOut
+              ? "LLM 请求超时，已自动终止。"
+              : `LLM 网络请求失败（${endpoint}）：${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+            timedOut ? "timeout" : "failed",
+            timedOut
           );
         }
         if (retryDelayMs > 0) {
@@ -552,9 +907,9 @@ export async function reviewWithLlm(
         continue;
       }
       if (
-        response.ok ||
+        lastResponse?.ok ||
         attempt >= retries ||
-        !retryableFailure(response.status, raw)
+        !retryableFailure(lastResponse?.status || 0, lastRaw)
       ) {
         break;
       }
@@ -564,42 +919,70 @@ export async function reviewWithLlm(
         );
       }
     }
-    return { response: response!, raw };
+    return { response: lastResponse!, raw: lastRaw };
   };
 
-  let { response, raw } = await requestWithRetry(body, 1);
-  if (
-    !response.ok &&
-    /response_format|json_schema|unavailable|bad_response_body/i.test(raw)
-  ) {
-    ({ response, raw } = await requestWithRetry(
-      withoutStructuredOutput(body),
-      0
-    ));
-  }
-  if (!response.ok) {
-    throw new Error(
-      `LLM 请求失败 HTTP ${response.status}: ${raw.slice(0, 500)}`
-    );
-  }
-
-  const text =
-    settings.protocol === "chat_completions"
-      ? chatText(JSON.parse(raw))
-      : /text\/event-stream/i.test(response.headers.get("content-type") || "") ||
-          /^\s*(?:event|data):/m.test(raw)
-        ? responsesStreamText(raw)
-        : responseText(JSON.parse(raw));
-  if (!text) throw new Error("LLM 返回中没有找到结构化文本。");
-  return {
-    ...parseJson(text),
-    provider: "openai",
-    model: settings.model,
-    requestStats: {
-      ...reviewPayloadStats(draft, settings.includeImages),
-      requestBytes
+  try {
+    let { response, raw } = await requestWithRetry(body, 1);
+    if (
+      !response.ok &&
+      /response_format|json_schema|unavailable|bad_response_body/i.test(raw)
+    ) {
+      fallbackUsed = true;
+      ({ response, raw } = await requestWithRetry(
+        withoutStructuredOutput(body),
+        0
+      ));
     }
-  };
+    if (!response.ok) {
+      throw new Error(
+        `LLM 请求失败 HTTP ${response.status}: ${raw.slice(0, 500)}`
+      );
+    }
+
+    const text =
+      settings.protocol === "chat_completions"
+        ? chatText(JSON.parse(raw))
+        : /text\/event-stream/i.test(response.headers.get("content-type") || "") ||
+            /^\s*(?:event|data):/m.test(raw)
+          ? responsesStreamText(raw)
+          : responseText(JSON.parse(raw));
+    if (!text) throw new Error("LLM 返回中没有找到结构化文本。");
+    const finishedAt = new Date().toISOString();
+    return {
+      ...parseJson(text),
+      provider: "openai",
+      model: settings.model,
+      requestStats: {
+        ...reviewPayloadStats(draft, settings.includeImages),
+        requestBytes,
+        endpoint,
+        protocol: settings.protocol,
+        startedAt,
+        finishedAt,
+        durationMs: Date.now() - startedAtMs,
+        attempts,
+        responseStatus: response.status,
+        responseContentType: response.headers.get("content-type"),
+        responseBytes: new TextEncoder().encode(raw).length,
+        responseMode: responseRead.mode,
+        terminalEvent: responseRead.terminalEvent,
+        firstByteMs: responseRead.firstByteMs,
+        terminalEventMs: responseRead.terminalEventMs,
+        connectionClosedMs: responseRead.connectionClosedMs,
+        fallbackUsed,
+        clientRequestId,
+        responseRequestId:
+          response.headers.get("x-request-id") ||
+          response.headers.get("request-id") ||
+          response.headers.get("x-new-api-request-id") ||
+          responseRequestIdFromRaw(raw)
+      }
+    };
+  } catch (error) {
+    if (error instanceof LlmRequestError) throw error;
+    throw requestError(error);
+  }
 }
 
 export const llmInternals = {
@@ -611,6 +994,9 @@ export const llmInternals = {
   parseJson,
   responseText,
   responsesStreamText,
+  terminalResponsesEvent,
+  hasTerminalResponsesEvent,
+  responseRequestIdFromRaw,
   chatText,
   assertOpenAiUrl,
   withoutStructuredOutput,

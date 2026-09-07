@@ -20,20 +20,27 @@ import {
   type TapNowApiNode,
   type TapNowCanvasSnapshot
 } from "../utils/tapnow";
-import { reviewPayloadStats } from "../utils/llm";
+import {
+  LLM_REQUEST_TIMEOUT_MS,
+  selectPreparedImages
+} from "../utils/limits";
+import {
+  reviewPayloadStats,
+  type LlmRequestDiagnostics
+} from "../utils/llm";
 import {
   MAX_REVIEW_IMAGE_MATERIALS,
   MAX_REVIEW_PROMPT_CHARS,
   MAX_REVIEW_TEXT_MATERIAL_ITEM_CHARS,
   MAX_REVIEW_TEXT_MATERIALS,
   MAX_REVIEW_UPSTREAM_CHARS,
-  MAX_SINGLE_IMAGE_BYTES,
-  selectPreparedImages
+  MAX_SINGLE_IMAGE_BYTES
 } from "../utils/limits";
 
 interface LlmResponse {
   ok: boolean;
   error?: string;
+  diagnostics?: LlmRequestDiagnostics;
   result?: {
     decision: "allow" | "warn" | "block";
     summary: string;
@@ -42,6 +49,23 @@ interface LlmResponse {
     model: string;
     requestStats?: ReturnType<typeof reviewPayloadStats> & {
       requestBytes: number;
+      endpoint: string;
+      protocol: "responses" | "chat_completions";
+      startedAt: string;
+      finishedAt: string;
+      durationMs: number;
+      attempts: number;
+      responseStatus: number | null;
+      responseContentType: string | null;
+      responseBytes: number;
+      responseMode: "json" | "sse" | "unknown";
+      terminalEvent: string | null;
+      firstByteMs: number | null;
+      terminalEventMs: number | null;
+      connectionClosedMs: number | null;
+      fallbackUsed: boolean;
+      clientRequestId: string;
+      responseRequestId: string | null;
     };
   };
 }
@@ -73,7 +97,8 @@ export default defineContentScript({
         dragOriginTop: number;
         reviewSequence: number;
         activeNodeId: string | null;
-        lastDraft: ReviewDraft | null;
+      lastDraft: ReviewDraft | null;
+        pendingTimer: ReturnType<typeof setInterval> | null;
       } = {
         settings: DEFAULT_SETTINGS,
         activeField: null,
@@ -87,7 +112,8 @@ export default defineContentScript({
         dragOriginTop: 0,
         reviewSequence: 0,
         activeNodeId: null,
-        lastDraft: null
+        lastDraft: null,
+        pendingTimer: null
       };
 
       const host = document.createElement("div");
@@ -722,8 +748,8 @@ export default defineContentScript({
           ? toReviewNodeInfo(apiFocusRecord, sourceImageUrl)
           : null;
         const nodeType =
-          domNodeType ||
           apiFocusInfo?.nodeType ||
+          domNodeType ||
           inferNodeTypeFromId(nodeId);
         const apiIncomingConnectionsUnordered = (apiSnapshot?.connections || [])
           .filter((connection) => String(connection.target || "") === nodeId)
@@ -870,8 +896,8 @@ export default defineContentScript({
         const domCurrentPrompt =
           nodeType === "text" ? promptValue(currentNodeText) : "";
         const promptCandidates = [
-          { source: "focused-node-input", value: fieldPrompt },
           { source: "tapnow-api.node.data.prompt", value: apiPrompt },
+          { source: "focused-node-input", value: fieldPrompt },
           {
             source: "tapnow-api.node.data.text",
             value: nodeType === "text" ? apiOutputText : ""
@@ -1234,7 +1260,8 @@ export default defineContentScript({
         llm: LlmResponse["result"] | null = null,
         llmError = "",
         imagePreparationAttempted = false,
-        llmCalled = false
+        llmCalled = false,
+        requestDiagnostics: LlmRequestDiagnostics | null = null
       ) {
         const issues = [...local.issues, ...(llm?.issues || [])];
         const issueHtml = issues.length
@@ -1265,7 +1292,10 @@ export default defineContentScript({
             (image) => image.role === "focused-node-output"
           ).length || 0;
         const uploadable =
-          draft.imageMaterials?.filter((image) => image.dataUrl).length || 0;
+          draft.imageMaterials?.filter(
+            (image) =>
+              Boolean(image.dataUrl) && image.role !== "focused-node-output"
+          ).length || 0;
         const selectedImageIds = new Set(
           selectPreparedImages(draft.imageMaterials || []).map(
             ({ image }) => image.materialId
@@ -1288,7 +1318,11 @@ export default defineContentScript({
             : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项（引用 ${referenceImageCount}，产物 ${outputImageCount}） · 正在检查图片可发送性`
           : `文字 ${draft.textMaterials?.length || 0} 项 · 图片 ${imageCount} 项（引用 ${referenceImageCount}，产物 ${outputImageCount}） · 图片发送未开启`;
         const imageNotice = state.settings.llmIncludeImages
-          ? imagePreparationAttempted
+          ? requestDiagnostics?.phase === "started"
+            ? `正在请求 LLM 审阅，已等待 ${Math.floor(
+                (requestDiagnostics.durationMs || 0) / 1000
+              )} 秒；请求仍在处理中。`
+            : imagePreparationAttempted
             ? `${captureErrors.length ? captureErrors.join(" ") + " " : ""}图片仅在本地完成预检；点击“检测”才会按总请求预算发送。${payloadStats.omittedCount ? ` 有 ${payloadStats.omittedCount} 项因预算未发送。` : ""}`
             : "正在本地准备图片；此过程不会调用 LLM。"
           : "点击“检测”才会调用 LLM；当前未开启图片发送，只传图片元数据。";
@@ -1378,7 +1412,12 @@ export default defineContentScript({
             textCharsSource: payloadStats.sourceTextChars,
             textCharsIncluded: payloadStats.includedTextChars,
             textCharsOmitted: payloadStats.omittedTextChars,
-            requestBytes: llm?.requestStats?.requestBytes || null
+            requestBytes: llm?.requestStats?.requestBytes ||
+              requestDiagnostics?.requestBytes ||
+              null,
+            clientRequestId: requestDiagnostics?.clientRequestId || null,
+            responseRequestId: requestDiagnostics?.responseRequestId || null,
+            ...(requestDiagnostics || {})
           },
           llm: llm
             ? {
@@ -1390,7 +1429,11 @@ export default defineContentScript({
                 suggestions: llm.suggestions,
                 requestStats: llm.requestStats || null
               }
-            : { called: llmCalled, error: llmError || null }
+            : {
+                called: llmCalled,
+                error: llmError || null,
+                diagnostics: requestDiagnostics
+              }
         };
 
         body.innerHTML = `
@@ -1412,6 +1455,50 @@ export default defineContentScript({
           </details>
         `;
         console.info("[TapNow Companion] panel", debugInfo);
+      }
+
+      async function sendLlmReview(
+        draft: ReviewDraft,
+        clientRequestId: string
+      ): Promise<LlmResponse> {
+        const timeoutMs = LLM_REQUEST_TIMEOUT_MS + 5_000;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([
+            browser.runtime.sendMessage({
+              type: "tapnow:llm-review",
+              draft,
+              clientRequestId
+            }) as Promise<LlmResponse>,
+            new Promise<LlmResponse>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error(`LLM 请求超过 ${(timeoutMs / 1000).toFixed(0)} 秒，已停止等待。`)),
+                timeoutMs
+              );
+            })
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      }
+
+      function startedDiagnostics(): LlmRequestDiagnostics {
+        return {
+          phase: "started",
+          endpoint:
+            state.settings.llmProtocol === "responses"
+              ? `${state.settings.llmBaseUrl}/responses`
+              : `${state.settings.llmBaseUrl}/chat/completions`,
+          protocol: state.settings.llmProtocol,
+          model: state.settings.llmModel,
+          startedAt: new Date().toISOString(),
+          durationMs: 0,
+          attempts: 0,
+          responseStatus: null,
+          responseContentType: null,
+          responseBytes: 0,
+          requestBytes: 0
+        };
       }
 
       function clamp(value: number, minimum: number, maximum: number): number {
@@ -1505,11 +1592,38 @@ export default defineContentScript({
           "beforeend",
           `<div class="notice">正在请求 LLM 审阅...</div>`
         );
+        const started = startedDiagnostics();
+        render(draft, local, null, "", prepareImages, false, started);
+        const clientRequestId = crypto.randomUUID();
+        const refreshPendingState = () => {
+          if (sequence !== state.reviewSequence) return;
+          render(
+            draft,
+            local,
+            null,
+            "",
+            prepareImages,
+            false,
+            {
+              ...started,
+              clientRequestId,
+              durationMs:
+                Date.now() - new Date(started.startedAt).getTime()
+            }
+          );
+        };
+        state.pendingTimer = setInterval(refreshPendingState, 1_000);
         try {
-          const response = (await browser.runtime.sendMessage({
-            type: "tapnow:llm-review",
-            draft
-          })) as LlmResponse;
+          const response = await sendLlmReview(draft, clientRequestId);
+          const responseDiagnostics =
+            response?.diagnostics ||
+            (response?.result?.requestStats
+              ? {
+                  ...response.result.requestStats,
+                  phase: "completed" as const,
+                  timedOut: false
+                }
+              : null);
           if (sequence === state.reviewSequence) {
             render(
               draft,
@@ -1517,7 +1631,8 @@ export default defineContentScript({
               response?.ok ? response.result || null : null,
               response?.error || "",
               prepareImages,
-              true
+              true,
+              responseDiagnostics
             );
             console.info("[TapNow Companion] LLM result", response);
           }
@@ -1529,10 +1644,29 @@ export default defineContentScript({
               null,
               error instanceof Error ? error.message : String(error),
               prepareImages,
-              true
+              true,
+              {
+                ...started,
+                phase: /超过 \d+ 秒|超时/i.test(
+                  error instanceof Error ? error.message : String(error)
+                )
+                  ? "timeout"
+                  : "failed",
+                durationMs: Date.now() -
+                  new Date(started.startedAt).getTime(),
+                finishedAt: new Date().toISOString(),
+                error: error instanceof Error ? error.message : String(error),
+                timedOut: /超时|超过/i.test(
+                  error instanceof Error ? error.message : String(error)
+                )
+              }
             );
           }
         } finally {
+          if (state.pendingTimer) {
+            clearInterval(state.pendingTimer);
+            state.pendingTimer = null;
+          }
           detectButton.disabled = false;
         }
       }
@@ -1540,6 +1674,10 @@ export default defineContentScript({
       function closePanel() {
         panel.classList.add("hidden");
         state.reviewSequence++;
+        if (state.pendingTimer) {
+          clearInterval(state.pendingTimer);
+          state.pendingTimer = null;
+        }
       }
 
       function loadLauncherPosition() {

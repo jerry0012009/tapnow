@@ -65,6 +65,174 @@ test("extracts structured text from a Responses event stream", () => {
   assert.equal(llmInternals.responsesStreamText(stream), result);
 });
 
+test("recognizes terminal Responses events before an SSE connection closes", () => {
+  assert.equal(
+    llmInternals.hasTerminalResponsesEvent(
+      'event: response.completed\ndata: {"type":"response.completed","response":{"output":[]}}\n\n'
+    ),
+    true
+  );
+  assert.equal(
+    llmInternals.hasTerminalResponsesEvent(
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"{"}\n\n'
+    ),
+    false
+  );
+});
+
+test("finishes when Responses emits completed without closing the SSE stream", async () => {
+  const result = JSON.stringify({
+    decision: "allow",
+    summary: "完成",
+    issues: [],
+    suggestions: []
+  });
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(
+        new TextEncoder().encode(
+          [
+            "event: response.output_text.done",
+            `data: ${JSON.stringify({
+              type: "response.output_text.done",
+              text: result
+            })}`,
+            "",
+            "event: response.completed",
+            `data: ${JSON.stringify({
+              type: "response.completed",
+              response: { output_text: result }
+            })}`,
+            "",
+            ""
+          ].join("\n")
+        )
+      );
+    }
+  });
+
+  const review = await reviewWithLlm(
+    { prompt: "检查这个节点" },
+    {
+      apiKey: "test-key",
+      includeImages: false,
+      protocol: "responses",
+      model: "gpt-test",
+      baseUrl: "http://127.0.0.1"
+    },
+    {
+      allowTestEndpoint: true,
+      timeoutMs: 1_000,
+      fetchImpl: async () =>
+        new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+    }
+  );
+
+  assert.equal(review.decision, "allow");
+  assert.equal(review.summary, "完成");
+});
+
+test("finishes when a complete JSON body is mislabeled or never reaches EOF", async () => {
+  const result = JSON.stringify({
+    decision: "allow",
+    summary: "JSON 已完成",
+    issues: [],
+    suggestions: []
+  });
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(JSON.stringify({ output_text: result })));
+      // Deliberately keep the connection open. A complete JSON body is enough.
+    }
+  });
+
+  const review = await reviewWithLlm(
+    { prompt: "JSON 读取测试" },
+    {
+      apiKey: "test-key",
+      includeImages: false,
+      protocol: "responses",
+      model: "gpt-test",
+      baseUrl: "http://127.0.0.1"
+    },
+    {
+      allowTestEndpoint: true,
+      timeoutMs: 1_000,
+      fetchImpl: async () =>
+        new Response(stream, {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+    }
+  );
+
+  assert.equal(review.summary, "JSON 已完成");
+  assert.equal(review.requestStats.responseMode, "json");
+  assert.equal(review.requestStats.connectionClosedMs, null);
+});
+
+test("sniffs an SSE body even when the intermediary labels it application/json", async () => {
+  const result = JSON.stringify({
+    decision: "allow",
+    summary: "SSE 已完成",
+    issues: [],
+    suggestions: []
+  });
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(
+        new TextEncoder().encode(
+          [
+            ": keepalive",
+            "",
+            "event: response.output_text.done",
+            `data: ${JSON.stringify({
+              type: "response.output_text.done",
+              text: result
+            })}`,
+            "",
+            "event: response.completed",
+            `data: ${JSON.stringify({
+              type: "response.completed",
+              response: { output: [] }
+            })}`,
+            "",
+            ""
+          ].join("\n")
+        )
+      );
+      // Deliberately keep the connection open after response.completed.
+    }
+  });
+
+  const review = await reviewWithLlm(
+    { prompt: "SSE 探测测试" },
+    {
+      apiKey: "test-key",
+      includeImages: false,
+      protocol: "responses",
+      model: "gpt-test",
+      baseUrl: "http://127.0.0.1"
+    },
+    {
+      allowTestEndpoint: true,
+      timeoutMs: 1_000,
+      fetchImpl: async () =>
+        new Response(stream, {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+    }
+  );
+
+  assert.equal(review.summary, "SSE 已完成");
+  assert.equal(review.requestStats.responseMode, "sse");
+  assert.equal(review.requestStats.terminalEvent, "response.completed");
+});
+
 test("includes captured data URLs in multimodal request content", () => {
   const dataUrl = "data:image/png;base64,ZmFrZQ==";
   const draft = {
@@ -454,6 +622,37 @@ test("retries a transient browser network failure", async () => {
   assert.equal(calls, 2);
 });
 
+test("terminates a request that never produces an HTTP response", async () => {
+  await assert.rejects(
+    reviewWithLlm(
+      { prompt: "超时测试" },
+      {
+        apiKey: "test-key",
+        includeImages: false,
+        protocol: "responses",
+        model: "test-model",
+        baseUrl: "https://api.acucompute.com/v1"
+      },
+      {
+        timeoutMs: 20,
+        retryDelayMs: 0,
+        fetchImpl: (async (_input, init) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted", "AbortError"))
+            );
+          })) as typeof fetch
+      }
+    ),
+    (error: any) => {
+      assert.equal(error.name, "LlmRequestError");
+      assert.equal(error.diagnostics.phase, "timeout");
+      assert.equal(error.diagnostics.timedOut, true);
+      return true;
+    }
+  );
+});
+
 test("runs the complete Responses and Chat Completions HTTP flows", async () => {
   const requests: Array<{ url: string; body: any; authorization: string }> = [];
   const server = http.createServer(async (request, response) => {
@@ -522,7 +721,7 @@ test("runs the complete Responses and Chat Completions HTTP flows", async () => 
     assert.equal(requests[1].url, "/v1/chat/completions");
     assert.equal(requests[0].authorization, "Bearer test-key");
     assert.equal(requests[1].authorization, "Bearer test-key");
-    assert.equal(requests[0].body.stream, true);
+    assert.equal(requests[0].body.stream, false);
     assert.equal(requests[0].body.text.format.type, "json_schema");
     assert.equal(requests[1].body.response_format.type, "json_schema");
   } finally {

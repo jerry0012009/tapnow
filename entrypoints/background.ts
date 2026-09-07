@@ -1,7 +1,7 @@
 import { browser } from "wxt/browser";
 import { defineBackground } from "wxt/utils/define-background";
 import { DEFAULT_SETTINGS, normalizeSettings } from "../utils/reviewer";
-import { reviewWithLlm } from "../utils/llm";
+import { LlmRequestError, reviewWithLlm } from "../utils/llm";
 import { MAX_SINGLE_IMAGE_BYTES } from "../utils/limits";
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -161,12 +161,16 @@ export default defineBackground(() => {
         protocol: settings.llmProtocol,
         model: settings.llmModel,
         baseUrl: settings.llmBaseUrl
+      }, {
+        clientRequestId: String(message.clientRequestId || "")
       });
       return { ok: true, result };
     } catch (error) {
       return {
         ok: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        diagnostics:
+          error instanceof LlmRequestError ? error.diagnostics : undefined
       };
     }
   });

@@ -394,3 +394,82 @@ Image 3 -> image-c9795845-d673-4c36-971b-d3d888cc42f6 / 穿衣服-正脸
 | relations 顺序变化不影响 `Image N` 映射 | 通过，改用稳定 connections 顺序 |
 | 单元/协议/重试测试 | 31/31 通过 |
 | WXT production build | 通过 |
+
+## 14. 2026-09-07 ACU 卡住问题复原与真实回归
+
+### 14.1 精确关联结果
+
+本次真实 Chrome 检测使用扩展生成的 `X-Client-Request-Id` 做关联，并在本机
+`acu-router` PostgreSQL 中核对了 logical request、provider attempt 以及
+client response。敏感 ID 不写入公开报告；完整值只保留在页面“开发者信息”和
+本机路由日志中。
+
+| 项目 | 结果 |
+| --- | --- |
+| 真实页面 | `https://app.tapnow.ai/canvas/73c4c63e-4ddd-428b-8f27-5c482f4be03c` |
+| 真实节点 | `deefd076-ee2b-4c1b-a629-15ea3481c68d` |
+| 当前输入 | 1 项当前节点提示词 |
+| 参考图 | 2 项，均已准备并发送 |
+| 请求体 | 901,679 字节 |
+| ACU logical request | `completed` |
+| provider HTTP | 200 |
+| 浏览器响应 | `application/json` |
+| LLM 结果 | `warn` |
+| 端到端耗时 | 58.7 秒 |
+
+这次真实请求没有卡死。ACU 记录显示 provider 成功、没有
+`client_cancelled`，最终 client response 已完整保存。
+
+### 14.2 根因
+
+历史 ACU payload 同时出现过两种真实返回形态：
+
+1. `stream:false` 请求收到普通 `application/json`，响应体完整后返回。
+2. 同类 Responses 请求收到 `text/event-stream`，并包含
+   `response.output_text.done` 和 `response.completed`，但连接 EOF 可能晚于
+   终止事件。
+
+旧版插件只在响应头明确为 SSE 时使用 `ReadableStream`；其他情况调用
+`response.text()`，这会等待连接 EOF。于是当中间层把 SSE 误标为
+`application/json`，或服务端已经发送完整 JSON 但连接未及时关闭时，面板会一直
+停留在“正在请求”。
+
+`acu-frontend` 日志中的 `client_gone` / `use of closed network connection`
+是另一类真实现象：客户端主动断开后，服务端停止扫描上游流。它们不能直接证明
+本次扩展请求失败；本次关联请求的状态是 `completed`，不是 `client_gone`。
+
+### 14.3 修复
+
+- 所有有响应体的请求都按块读取，不再仅由 `Content-Type` 决定读取方式。
+- 自动识别普通 JSON、标准 Responses SSE，以及头部误标为 JSON 的 SSE。
+- JSON 已经解析成功时立即继续，不等待 EOF。
+- 收到 `response.completed`、`response.done`、`response.failed`、`error`
+  或 `[DONE]` 后立即结束读取。
+- 请求超时、重试和 `AbortController` 仍保留。
+- 开发者信息新增响应模式、首字节耗时、终止事件、终止事件耗时、是否等到
+  连接关闭以及响应 ID。
+
+### 14.4 真实回归
+
+使用真实 Chrome 151、真实 TapNow 页面、真实图片素材和真实 ACU API 完成：
+
+1. 重新加载生产构建扩展。
+2. 聚焦真实图片生成节点。
+3. 读取当前节点提示词、两个直接入边图片和来源关系。
+4. 等待两张图片完成本地准备。
+5. 点击真实“检测”。
+6. 收到结构化 `warn` 结果，面板结束等待状态。
+
+本轮真实响应是普通 JSON；自动测试另外覆盖了“不关闭连接的 JSON”和
+`Content-Type: application/json` 的 SSE，两种情况均能在终止条件满足后返回。
+
+## 15. 当前验证状态
+
+| 验证 | 结果 |
+| --- | --- |
+| 自动测试 | 36/36 通过 |
+| WXT Chrome MV3 构建 | 通过 |
+| `git diff --check` | 通过 |
+| 真实 Chrome TapNow 双图检测 | 通过 |
+| ACU logical request 关联 | 通过 |
+| API Key 写入代码、ZIP、日志、报告 | 未发现 |

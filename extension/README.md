@@ -41,7 +41,9 @@ npm run extension:build
 - 面板的“开发者信息”和 Console 会显示当前 focus、节点类型、输入、图片准备状态、
   LLM 协议/模型和结果摘要，不包含 API Key 或图片 data URL；每张已准备图片还会记录
   是否压缩、压缩方式、原始字节数、发送字节数和压缩比例。
-- Responses 请求显式使用流式协议，并解析 ACU 返回的 Responses SSE 事件。
+- Responses 请求显式使用 `stream:false`；客户端同时兼容 ACU 返回的普通 JSON、
+  标准 Responses SSE，以及响应头误标为 `application/json` 的 SSE。收到
+  `response.completed` 后不等待连接 EOF。
 
 0.1 不调用 TapNow 私有 API，不读取 TapNow Token，不处理 TapNow 的
 WebSocket/SSE，也不拦截或修改 TapNow 的运行请求。当前允许 OpenAI/ACU HTTPS
@@ -119,7 +121,7 @@ token 数。面板开发者信息会显示文字实际纳入量、准备图片�
 - 点击“检测”后执行本地规则和可选 LLM 审阅
 - popup 配置页可打开并显示两种 API 协议
 - 真实 TapNow 画布、真实节点 focus 和真实图片素材
-- ACU Responses 连续 5 次真实 SSE 请求与解析
+- ACU Responses 真实 JSON/SSE 请求与解析
 - ACU Chat Completions 真实 JSON 请求与解析
 
 实际 ACU/OpenAI 计费请求需要在本机 popup 中配置自己的 API Key。个人试用时
