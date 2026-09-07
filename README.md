@@ -21,7 +21,7 @@
 [examples/canvas-export-TEST-0903](examples/canvas-export-TEST-0903/README.md)。
 
 个人试用的最小 Chrome 副驾驶扩展见
-[安装包说明](releases/README.md)：用户下载 0.1.10 ZIP、解压并在 Chrome 扩展页加载，
+[安装包说明](releases/README.md)：用户下载 0.1.11 ZIP、解压并在 Chrome 扩展页加载，
 不需要 Node.js 或 npm。WXT 源码在 `wxt.config.ts`、`entrypoints/` 和
 `utils/`，也可以在扩展后台通过 Responses 或 Chat Completions 调用 OpenAI/ACU
 审阅当前 focus 节点的文字和可选图片素材；插件不拦截运行请求。
