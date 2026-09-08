@@ -1,5 +1,19 @@
 # TapNow Canvas Audit
 
+## 资产备份与本地查看
+
+当前开发重点为纯 Chrome 插件资产备份及独立只读查看器，不依赖 LLM。
+真实大画布已通过插件下载与原生目录写入：2,457 个成功目标，去重后
+1,792 个文件、11.46 GB；另有 32 个失败目标明确保留，不宣称全工作空间零遗漏。
+
+- [真实插件测试报告](docs/REAL_BACKUP_TEST_2026-09-08.md)
+- [自审计与未通过的产品门槛](docs/SELF_AUDIT_2026-09-08.md)
+- [网页查看器及 Mac/Windows 本地部署方式](docs/BACKUP_VIEWER.md)
+- [完整开发规划](docs/TAPNOW_WORKSPACE_BACKUP_PLAN.md)
+
+查看器首屏展示所有已备份节点及原始位置，点击才加载本地媒体，并可查阅完整
+提示词、节点属性、历史/备选、引用和失败原因。下面保留此前副驾驶与导出工具说明。
+
 针对 TapNow Canvas 的可导出性与浏览器请求可观测性验证工具。
 
 本仓库只发布审计脚本和脱敏报告。真实画布 JSON、媒体文件、登录态、
@@ -21,7 +35,7 @@
 [examples/canvas-export-TEST-0903](examples/canvas-export-TEST-0903/README.md)。
 
 个人试用的最小 Chrome 副驾驶扩展见
-[安装包说明](releases/README.md)：用户下载 0.1.11 ZIP、解压并在 Chrome 扩展页加载，
+[安装包说明](releases/README.md)：用户下载 ZIP、解压并在 Chrome 扩展页加载，
 不需要 Node.js 或 npm。WXT 源码在 `wxt.config.ts`、`entrypoints/` 和
 `utils/`，也可以在扩展后台通过 Responses 或 Chat Completions 调用 OpenAI/ACU
 审阅当前 focus 节点的文字和可选图片素材；插件不拦截运行请求。

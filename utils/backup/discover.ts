@@ -1,13 +1,5 @@
 import type { BackupAssetReference } from "./types";
 
-const URL_KEYS = new Set(["src", "url", "href", "preview_image", "previewImage"]);
-const FILE_KEYS = new Set([
-  "fileId",
-  "file_id",
-  "currentSourceFileId",
-  "sourceFileId"
-]);
-
 function objectRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -52,7 +44,7 @@ export function discoverAssetReferences(
     if (!url && !fileId) return;
     const key = `${fileId ?? ""}|${url ?? ""}|${path}`;
     if (seen.has(key)) return;
-    const ordinal = result.filter((item) => item.nodeId === nodeId).length + 1;
+    const ordinal = result.length + 1;
     seen.set(key, result.length);
     result.push({
       referenceId: `${canvasId}:${nodeId ?? "canvas"}:${result.length + 1}`,
@@ -79,20 +71,10 @@ export function discoverAssetReferences(
     }
     const record = objectRecord(current);
     if (!record) return;
-    const fileId = Object.entries(record).find(([key]) => FILE_KEYS.has(key))?.[1];
-    const localFileId =
-      typeof fileId === "string" && fileId.trim() ? fileId.trim() : null;
     for (const [key, child] of Object.entries(record)) {
       const childPath = `${path}.${key}`;
-      if (
-        URL_KEYS.has(key) &&
-        typeof child === "string" &&
-        /^https?:\/\//i.test(child)
-      ) {
-        add(childPath, child, localFileId);
-      }
-      if (FILE_KEYS.has(key) && typeof child === "string") {
-        add(childPath, null, child);
+      if (/file.?id|source.?file.?id/i.test(key) && typeof child === "string" && child.trim()) {
+        add(childPath, null, child.trim());
       }
       walk(child, childPath);
     }

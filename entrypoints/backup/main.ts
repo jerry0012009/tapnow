@@ -1,414 +1,163 @@
 import { browser } from "wxt/browser";
-import { calculateStorageBudget } from "../../utils/backup/storage";
 import { collectPages } from "../../utils/backup/pagination";
 import { discoverAssetReferences } from "../../utils/backup/discover";
-import { createCheckpoint, transitionCheckpoint } from "../../utils/backup/checkpoint";
-import type { BackupScope } from "../../utils/backup/types";
-
-type DirectoryHandle = {
-  name: string;
-  getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<DirectoryHandle>;
-  getFileHandle(name: string, options?: { create?: boolean }): Promise<FileHandle>;
-};
-
-type FileHandle = {
-  createWritable(): Promise<{
-    write(data: string | Blob | { type: "write"; position: number; data: Uint8Array }): Promise<void>;
-    close(): Promise<void>;
-  }>;
-};
-
-type DirectoryPickerWindow = Window & {
-  showDirectoryPicker?: () => Promise<DirectoryHandle>;
-};
+import { downloadToDirectory, indexReferences, reconcileAssets, localFile, writeLocal, verifySaved, type LocalDirectory, type Result } from "../../utils/backup/engine";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
-  <style>
-    :root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; }
-    body { max-width: 980px; margin: 0 auto; padding: 28px; color: #0f172a; background: #f8fafc; }
-    h1 { margin: 0 0 6px; font-size: 24px; }
-    p { color: #475569; line-height: 1.5; }
-    .toolbar { display:flex; gap:10px; flex-wrap:wrap; margin:18px 0; }
-    button { min-height:38px; padding:0 14px; border:1px solid #cbd5e1; border-radius:7px; background:#fff; color:#0f172a; font-weight:700; cursor:pointer; }
-    button.primary { background:#0f766e; border-color:#0f766e; color:#fff; }
-    button:disabled { cursor:not-allowed; opacity:.55; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
-    .metric { padding:14px; border:1px solid #dbe3ed; background:#fff; border-radius:8px; }
-    .metric strong { display:block; font-size:22px; margin-top:4px; }
-    .label { color:#64748b; font-size:12px; font-weight:700; }
-    #status { margin-top:16px; padding:12px; border-left:4px solid #0f766e; background:#ecfdf5; white-space:pre-wrap; }
-    .warning { border-left-color:#d97706 !important; background:#fffbeb !important; }
-    code { overflow-wrap:anywhere; }
-  </style>
-  <h1>TapNow 备份中心</h1>
-  <p>首版从当前已打开的 TapNow 画布开始。你选择的目录只保存本地备份；本页不上传数据到 learning 或第三方服务。</p>
-  <div class="toolbar">
-    <button id="choose" class="primary">选择备份目录</button>
-    <button id="scan">扫描当前画布</button>
-    <button id="backup" class="primary" disabled>保存当前画布快照</button>
-  </div>
-  <div class="grid">
-    <div class="metric"><span class="label">目录</span><strong id="directory">未选择</strong></div>
-    <div class="metric"><span class="label">画布</span><strong id="canvas">未扫描</strong></div>
-    <div class="metric"><span class="label">节点 / 连线</span><strong id="graph">-</strong></div>
-    <div class="metric"><span class="label">发现资源引用</span><strong id="assets">-</strong></div>
-    <div class="metric"><span class="label">本机保存预算</span><strong id="budget">读取中</strong></div>
-  </div>
-  <div id="status" role="status">请保持一个已登录的 TapNow 画布标签页打开。</div>
-`;
+<style>
+:root{font-family:system-ui,sans-serif;color:#17212b;background:#f5f7f8}body{max-width:1100px;margin:auto;padding:24px}
+h1{font-size:24px}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0}
+button,input,select{font:inherit;padding:9px 12px;border:1px solid #bdc8cd;border-radius:6px;background:#fff}button{cursor:pointer}
+.primary{background:#126f5e;color:#fff}.muted{color:#63717d;font-size:13px}#status{white-space:pre-wrap;line-height:1.55}
+.metrics{display:flex;gap:24px;flex-wrap:wrap;border-block:1px solid #d6dfe2;padding:16px 0}.metrics b{display:block;font-size:22px;margin-top:5px}
+progress{width:100%;height:18px}
+</style>
+<h1>TapNow 资产备份中心</h1>
+<div class="row"><button id="choose" class="primary">选择备份目录</button><span id="directory">未选择</span></div>
+<div class="row"><select id="canvas" aria-label="选择画布"></select><button id="scan">扫描画布</button></div>
+<div class="row"><label>本轮新增上限 <input id="limit" type="number" value="20" min="0.1" step="0.1"> GiB</label><span class="muted">用户设定上限，非磁盘剩余空间</span></div>
+<div class="row"><button id="backup" class="primary" disabled>开始 / 增量补齐</button><button id="pause" disabled>暂停</button></div>
+<div class="metrics"><span>节点 / 连线<b id="graph">-</b></span><span>引用 / 唯一目标<b id="assets">-</b></span><span>已验证 / 待处理 / 失败<b id="counts">-</b></span><span>已写入<b id="bytes">0 GB</b></span></div>
+<progress id="progress" max="1" value="0"></progress><p id="status">请保持已登录的 TapNow 画布标签页打开。</p>`;
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-let directory: DirectoryHandle | null = null;
-let scanned: {
-  canvas: unknown;
-  nodes: unknown[];
-  connections: unknown[];
-  assets: ReturnType<typeof discoverAssetReferences>;
-  canvasId: string;
-  canvasName: string;
-} | null = null;
-
-function setStatus(text: string, warning = false) {
-  $("status").textContent = text;
-  $("status").classList.toggle("warning", warning);
+let directory: LocalDirectory | null = null;
+let snapshot: any = null;
+let running = false;
+let controller: AbortController | null = null;
+const record = (v: unknown): Record<string, any> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, any> : {};
+const setStatus = (v: string) => $("status").textContent = v;
+const setBusy = (busy: boolean) => {
+  running = busy;
+  for (const id of ["choose", "scan", "canvas", "limit"]) ($<HTMLButtonElement>(id)).disabled = busy;
+  $<HTMLButtonElement>("backup").disabled = busy || !directory || !snapshot;
+  $<HTMLButtonElement>("pause").disabled = !busy;
+};
+async function tabs() {
+  return (await browser.tabs.query({})).filter(tab => tab.id && /^https:\/\/app\.tapnow\.ai\/canvas\//.test(tab.url || ""));
 }
-
-async function activeTapNowTab() {
-  const tabs = await browser.tabs.query({});
-  const candidates = tabs
-    .filter((tab) => tab.id && tab.url?.startsWith("https://app.tapnow.ai/canvas/"))
-    .sort((left, right) => Number(right.active) - Number(left.active));
-  const tab = candidates[0];
-  if (!tab?.id) {
-    throw new Error("请先打开一个已登录的 TapNow 画布标签页。");
+async function api(tabId: number, endpoint: string) {
+  const result = await browser.tabs.sendMessage(tabId, { type: "tapnow:backup-fetch-json", endpoint });
+  if (!result?.ok) throw new Error(result?.error || `请求失败：${endpoint}`);
+  return result.body;
+}
+async function refreshCanvasList() {
+  const select = $<HTMLSelectElement>("canvas"); select.replaceChildren();
+  for (const tab of await tabs()) { const option = document.createElement("option"); option.value = String(tab.id); option.textContent = tab.title || tab.url || ""; select.append(option); }
+}
+async function scan() {
+  snapshot = null;
+  setStatus("正在读取节点、连线分页及资源引用...");
+  const tabId = Number($<HTMLSelectElement>("canvas").value); if (!tabId) throw new Error("没有可用画布");
+  const tab = await browser.tabs.get(tabId); const id = decodeURIComponent(tab.url!.match(/\/canvas\/([^/?#]+)/)![1]);
+  const base = `/api/canvas/v1/canvases/${encodeURIComponent(id)}`;
+  const page = async (kind: "nodes" | "connections") => collectPages(async cursor => {
+    const q = new URLSearchParams({ limit: "500" }); if (kind === "nodes") q.set("include_relations", "true"); if (cursor) q.set("cursor", cursor);
+    const data = record(record(await api(tabId, `${base}/${kind}?${q}`)).data);
+    if (!Array.isArray(data[kind])) throw new Error(`${kind} 列表缺失`);
+    return { items: data[kind], hasMore: Boolean(data.has_more), nextCursor: data.next_cursor || null, total: typeof data.total === "number" ? data.total : null };
+  }, item => String(record(item).id));
+  const canvasPayload = await api(tabId, `${base}?with_nodes=true&with_connections=true`);
+  const nodes = await page("nodes"), connections = await page("connections");
+  if (!nodes.diagnostic.complete || !connections.diagnostic.complete) throw new Error("分页不完整，未进入下载");
+  const refs = nodes.items.flatMap(node => discoverAssetReferences(id, String(record(node).id), record(node).data));
+  const indexed = indexReferences(refs);
+  snapshot = { canvasId: id, canvasName: String(record(record(canvasPayload).data).canvas?.name || id), canvas: record(record(canvasPayload).data).canvas || canvasPayload, nodes: nodes.items, connections: connections.items, ...indexed, diagnostics: { nodes: nodes.diagnostic, connections: connections.diagnostic } };
+  $("graph").textContent = `${nodes.items.length} / ${connections.items.length}`;
+  $("assets").textContent = `${refs.length} / ${indexed.assets.length}`;
+  $<HTMLButtonElement>("backup").disabled = !directory;
+  setStatus(`插件扫描完成：${nodes.items.length} 节点，${connections.items.length} 连线，${indexed.assets.length} 唯一资源目标。`);
+}
+async function backup() {
+  if (!directory || !snapshot) throw new Error("先选择目录并扫描画布");
+  const maxBytes = Number($<HTMLInputElement>("limit").value) * 1024 ** 3; if (!Number.isFinite(maxBytes) || !(maxBytes > 0)) throw new Error("上限必须大于 0");
+  const prepared = await browser.runtime.sendMessage({ type: "tapnow:prepare-backup" });
+  if (!prepared?.ok) throw new Error("媒体请求准备失败，请在扩展管理页面重新加载扩展");
+  const base = await directory.getDirectoryHandle("tapnow-backup", { create: true });
+  const root = await base.getDirectoryHandle(snapshot.canvasId, { create: true });
+  const previous = new Map<string, Result>();
+  try { const file = await (await localFile(root, "assets.ndjson")).getFile(); for (const line of (await file.text()).split("\n").filter(Boolean)) { const x = JSON.parse(line); previous.set(x.assetId, x); } }
+  catch (error) { if ((error as Error).name !== "NotFoundError") throw new Error("已有清单无法读取，未覆盖。请检查目录权限或文件格式。"); }
+  const targets = reconcileAssets(snapshot.assets, previous.values());
+  const results = new Map<string, Result>(targets.map(asset => [asset.assetId, { ...previous.get(asset.assetId), ...asset, status: "queued" }]));
+  let processed = 0, added = 0, reused = 0, stopped = false, finished = false;
+  controller = new AbortController();
+  const runId = `run-${Date.now()}`; const ndjson = (xs: unknown[]) => xs.map(x => JSON.stringify(x)).join("\n") + "\n";
+  if (previous.size) {
+    try {
+      const oldReport = JSON.parse(await (await (await localFile(root, "report.json")).getFile()).text());
+      if (/^run-\d+$/.test(oldReport.runId)) await writeLocal(root, `runs/${oldReport.runId}/assets.ndjson`, ndjson([...previous.values()]));
+    } catch (error) { if ((error as Error).name !== "NotFoundError") throw error; }
   }
-  return tab.id;
-}
-
-async function fetchJson(tabId: number, endpoint: string): Promise<unknown> {
-  const response = await browser.tabs.sendMessage(tabId, {
-    type: "tapnow:backup-fetch-json",
-    endpoint
-  });
-  if (!response?.ok) {
-    throw new Error(response?.error || `备份接口请求失败：${endpoint}`);
-  }
-  return response.body;
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function listFromPayload(payload: unknown, key: string): unknown[] {
-  const data = record(record(payload).data);
-  const value = data[key];
-  return Array.isArray(value) ? value : [];
-}
-
-function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-}
-
-async function sha256(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function writeBytes(
-  root: DirectoryHandle,
-  path: string,
-  chunks: Uint8Array[]
-) {
-  const segments = path.split("/");
-  const filename = segments.pop()!;
-  let current = root;
-  for (const segment of segments) {
-    current = await current.getDirectoryHandle(segment, { create: true });
-  }
-  const file = await current.getFileHandle(filename, { create: true });
-  const writable = await file.createWritable();
-  let position = 0;
-  for (const chunk of chunks) {
-    await writable.write({ type: "write", position, data: chunk });
-    position += chunk.length;
-  }
-  await writable.close();
-}
-
-async function downloadAsset(tabId: number, asset: ReturnType<typeof discoverAssetReferences>[number]) {
-  const sourceUrl =
-    asset.url ||
-    (asset.fileId
-      ? `https://files.tapnow.media/api/conversation/storage/uploads/${encodeURIComponent(asset.fileId)}`
-      : null);
-  if (!sourceUrl) {
-    return {
-      ...asset,
-      status: "unavailable-after-recovery" as const,
-      reason: "no-download-url-for-file-id"
+  await writeLocal(root, `runs/${runId}/snapshot.json`, JSON.stringify(snapshot));
+  await writeLocal(root, "canvas.json", JSON.stringify(snapshot.canvas));
+  await writeLocal(root, "nodes.ndjson", ndjson(snapshot.nodes));
+  await writeLocal(root, "connections.ndjson", ndjson(snapshot.connections));
+  await writeLocal(root, "references.ndjson", ndjson(snapshot.references));
+  let persistQueue = Promise.resolve();
+  const persist = async () => {
+    const all = [...results.values()], ok = all.filter(x => x.status === "verified");
+    $("counts").textContent = `${ok.length} / ${all.filter(x => x.status === "queued").length} / ${all.filter(x => x.status !== "verified" && x.status !== "queued").length}`;
+    $("bytes").textContent = `${(added / 1e9).toFixed(2)} GB`; $<HTMLProgressElement>("progress").max = targets.length; $<HTMLProgressElement>("progress").value = processed;
+    const report = {
+      schema_version: 1, producer: "chrome-extension", transport: "extension-fetch", writer: "FileSystemAccess", runId,
+      canvasId: snapshot.canvasId, canvasName: snapshot.canvasName, nodeCount: snapshot.nodes.length,
+      nodeTypes: snapshot.nodes.reduce((counts: Record<string, number>, node: any) => { const type = node.type || "unknown"; counts[type] = (counts[type] || 0) + 1; return counts; }, {}),
+      connectionCount: snapshot.connections.length, referenceCount: snapshot.references.length, uniqueAssetCount: targets.length,
+      currentScanAssetCount: snapshot.assets.length, retainedAssetCount: targets.length - snapshot.assets.length,
+      verifiedCount: ok.length, failedCount: all.filter(x => !["verified", "queued"].includes(x.status)).length,
+      pendingCount: all.filter(x => x.status === "queued").length, processed, reusedCount: reused, newBytes: added,
+      verifiedBytes: ok.reduce((s, a) => s + (a.bytes || 0), 0),
+      physicalBytes: [...new Map(ok.map(a => [a.file, a.bytes || 0])).values()].reduce((a,b) => a+b,0),
+      status: stopped ? "storage-budget-exceeded" : controller!.signal.aborted ? "paused" : finished ? (ok.length === targets.length ? "completed" : "partial") : "running",
+      limitBytes: maxBytes, diagnostics: snapshot.diagnostics, updatedAt: new Date().toISOString(),
+      ...(finished ? { finishedAt: new Date().toISOString() } : {})
     };
-  }
-  const chunks: Uint8Array[] = [];
-  let offset = 0;
-  let totalBytes: number | null = null;
-  let metadata: Record<string, unknown> = {};
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const response = await browser.runtime.sendMessage({
-      type: "tapnow:backup-fetch-asset",
-      url: sourceUrl,
-      start: offset,
-      end: offset + 4_000_000 - 1
+    setStatus(`${report.status} · ${processed}/${targets.length} · 已验证 ${ok.length} · 复用 ${reused} · 旧目标保留 ${report.retainedAssetCount}\n${directory!.name}/tapnow-backup/${snapshot.canvasId}`);
+    persistQueue = persistQueue.then(async () => {
+      await writeLocal(root, "assets.ndjson", ndjson(all));
+      await writeLocal(root, "report.json", JSON.stringify(report, null, 2));
+      await writeLocal(root, `runs/${runId}/report.json`, JSON.stringify(report, null, 2));
+      await writeLocal(root, `runs/${runId}/assets.ndjson`, ndjson(all));
     });
-    if (!response?.ok) {
-      return { ...asset, status: "retryable" as const, reason: response?.error || "asset-fetch-failed" };
-    }
-    const chunk = base64ToBytes(response.dataBase64 || "");
-    if (!chunk.length) break;
-    chunks.push(chunk);
-    offset += chunk.length;
-    totalBytes = typeof response.totalBytes === "number" ? response.totalBytes : totalBytes;
-    metadata = {
-      contentType: response.contentType,
-      etag: response.etag,
-      lastModified: response.lastModified,
-      totalBytes
-    };
-    if (response.complete || (totalBytes !== null && offset >= totalBytes)) break;
-  }
-  if (!chunks.length || (totalBytes !== null && offset !== totalBytes)) {
-    return { ...asset, status: "retryable" as const, reason: "incomplete-asset-range", ...metadata };
-  }
-  const bytes = new Uint8Array(offset);
-  let position = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, position);
-    position += chunk.length;
-  }
-  return {
-    ...asset,
-    status: "verified" as const,
-    bytes,
-    sha256: await sha256(bytes),
-    ...metadata
+    await persistQueue;
   };
-}
-
-async function scanCanvas() {
-  const tabId = await activeTapNowTab();
-  const url = (await browser.tabs.get(tabId)).url || "";
-  const match = url.match(/\/canvas\/([^/?#]+)/);
-  if (!match) throw new Error("当前页面不是具体画布页面。");
-  const canvasId = decodeURIComponent(match[1]);
-  const canvasPayload = await fetchJson(
-    tabId,
-    `/api/canvas/v1/canvases/${encodeURIComponent(canvasId)}?with_nodes=true&with_connections=true`
-  );
-  const canvas = record(record(canvasPayload).data).canvas || canvasPayload;
-  const snapshot = record(canvas);
-  const nodes = listFromPayload(canvasPayload, "nodes");
-  const connections = listFromPayload(canvasPayload, "connections");
-
-  const nodePages = await collectPages(
-    async (cursor) => {
-      const query = new URLSearchParams({
-        limit: "500",
-        include_relations: "true"
-      });
-      if (cursor) query.set("cursor", cursor);
-      const payload = await fetchJson(
-        tabId,
-        `/api/canvas/v1/canvases/${encodeURIComponent(canvasId)}/nodes?${query}`
-      );
-      const data = record(record(payload).data);
-      return {
-        items: Array.isArray(data.nodes) ? data.nodes : [],
-        hasMore: Boolean(data.has_more),
-        nextCursor: typeof data.next_cursor === "string" ? data.next_cursor : null,
-        total: typeof data.total === "number" ? data.total : null
-      };
-    },
-    (item) => String(record(item).id || JSON.stringify(item))
-  );
-  const connectionPages = await collectPages(
-    async (cursor) => {
-      const query = new URLSearchParams({ limit: "500" });
-      if (cursor) query.set("cursor", cursor);
-      const payload = await fetchJson(
-        tabId,
-        `/api/canvas/v1/canvases/${encodeURIComponent(canvasId)}/connections?${query}`
-      );
-      const data = record(record(payload).data);
-      return {
-        items: Array.isArray(data.connections) ? data.connections : [],
-        hasMore: Boolean(data.has_more),
-        nextCursor: typeof data.next_cursor === "string" ? data.next_cursor : null,
-        total: typeof data.total === "number" ? data.total : null
-      };
-    },
-    (item) => String(record(item).id || JSON.stringify(item))
-  );
-  const completeNodes = nodePages.diagnostic.complete ? nodePages.items : nodes;
-  const completeConnections = connectionPages.diagnostic.complete
-    ? connectionPages.items
-    : connections;
-  const assets = completeNodes.flatMap((node) =>
-    discoverAssetReferences(canvasId, String(record(node).id || "") || null, record(node).data)
-  );
-  scanned = {
-    canvas: snapshot,
-    nodes: completeNodes,
-    connections: completeConnections,
-    assets,
-    canvasId,
-    canvasName: String(snapshot.name || snapshot.title || canvasId)
-  };
-  $("canvas").textContent = scanned.canvasName;
-  $("graph").textContent = `${completeNodes.length} / ${completeConnections.length}`;
-  $("assets").textContent = String(assets.length);
-  $("backup").removeAttribute("disabled");
-  setStatus(
-    `扫描完成：节点分页 ${nodePages.diagnostic.pages} 页，连线分页 ${connectionPages.diagnostic.pages} 页。\n` +
-    `节点 ${completeNodes.length}，连线 ${completeConnections.length}，资源引用 ${assets.length}。`
-  );
-}
-
-async function writeText(root: DirectoryHandle, path: string, value: unknown) {
-  const segments = path.split("/");
-  const filename = segments.pop()!;
-  let current = root;
-  for (const segment of segments) {
-    current = await current.getDirectoryHandle(segment, { create: true });
-  }
-  const file = await current.getFileHandle(filename, { create: true });
-  const writable = await file.createWritable();
-  await writable.write(JSON.stringify(value, null, 2));
-  await writable.close();
-}
-
-async function saveSnapshot() {
-  if (!directory || !scanned) throw new Error("请先选择目录并扫描当前画布。");
-  const tabId = await activeTapNowTab();
-  const checkpoint = createCheckpoint(
-    `tapnow-${scanned.canvasId}`,
-    `run-${Date.now()}`,
-    { kind: "canvas", ids: [scanned.canvasId], includeChildren: false } satisfies BackupScope
-  );
-  const estimate = await navigator.storage?.estimate?.();
-  const availableBytes = Math.max(
-    0,
-    Number(estimate?.quota || 0) - Number(estimate?.usage || 0)
-  );
-  const budget = calculateStorageBudget(availableBytes);
-  const runRoot = await directory.getDirectoryHandle("tapnow-backup", { create: true });
-  const runId = checkpoint.runId;
-  await writeText(runRoot, `runs/${runId}/canvas.json`, scanned.canvas);
-  await writeText(runRoot, `runs/${runId}/nodes.json`, scanned.nodes);
-  await writeText(runRoot, `runs/${runId}/connections.json`, scanned.connections);
-  const assetResults = [];
-  let committedBytes = 0;
-  for (const asset of scanned.assets) {
-    const result = await downloadAsset(tabId, asset);
-    if (result.status === "verified") {
-      const nextBytes = result.bytes.byteLength;
-      if (!budget.usableBytes || committedBytes + nextBytes > budget.usableBytes) {
-        assetResults.push({
-          ...asset,
-          status: "retryable",
-          reason: "storage-budget-exceeded",
-          expectedBytes: nextBytes
-        });
-        continue;
-      }
-      await writeBytes(runRoot, `objects/sha256/${result.sha256.slice(0, 2)}/${result.sha256}`, [result.bytes]);
-      committedBytes += nextBytes;
-      assetResults.push({
-        ...result,
-        bytes: undefined,
-        file: `objects/sha256/${result.sha256.slice(0, 2)}/${result.sha256}`
-      });
-    } else {
-      assetResults.push(result);
+  await persist();
+  let cursor = 0;
+  const worker = async () => {
+    for (;;) {
+      const asset = targets[cursor++];
+      if (!asset || controller!.signal.aborted || stopped) return;
+      const old = previous.get(asset.assetId);
+      if (old?.file && old.sha256 && await verifySaved(root, { ...old, status: "verified" })) { results.set(asset.assetId, { ...old, ...asset, status: "verified", reused: true }); reused++; processed++; await persist(); continue; }
+      try {
+        const result = await downloadToDirectory(root, asset, { signal: controller!.signal, claim: bytes => { if (added + bytes > maxBytes) throw new Error("storage-budget-exceeded"); added += bytes; }, release: bytes => { added = Math.max(0, added - bytes); } });
+        results.set(asset.assetId, result); if (/storage-budget|QuotaExceeded|NotAllowed|No space/i.test(result.reason || "")) stopped = true;
+      } catch (error) { results.set(asset.assetId, { ...asset, status: "retryable", reason: String(error) }); }
+      processed++; await persist();
     }
-  }
-  await writeText(runRoot, `runs/${runId}/assets.json`, assetResults);
-  await writeText(
-    runRoot,
-    `runs/${runId}/checkpoint.json`,
-    transitionCheckpoint(checkpoint, "completed", {
-      budget,
-      nextAssetIndex: assetResults.length,
-      committedBytes,
-      failedAssetIds: assetResults
-        .filter((asset) => asset.status !== "verified")
-        .map((asset) => asset.referenceId)
-    })
-  );
-  await writeText(runRoot, "manifest.json", {
-    schema_version: 1,
-    backup_id: `tapnow-${scanned.canvasId}`,
-    latest_run_id: runId,
-    canvas_id: scanned.canvasId,
-    canvas_name: scanned.canvasName,
-    node_count: scanned.nodes.length,
-    connection_count: scanned.connections.length,
-    asset_reference_count: scanned.assets.length,
-    asset_download_status: assetResults.every((asset) => asset.status === "verified")
-      ? "verified"
-      : "partial",
-    downloaded_asset_count: assetResults.filter((asset) => asset.status === "verified").length,
-    downloaded_bytes: committedBytes,
-    storage_budget: budget,
-    note: "Asset files are content-addressed and verified with SHA-256; unresolved references remain in assets.json."
-  });
-  setStatus(
-    `已保存画布快照到 ${directory.name}/tapnow-backup/runs/${runId}。\n` +
-    `已保存元数据、节点、连线和资源字节：${assetResults.filter((asset) => asset.status === "verified").length}/${assetResults.length}，` +
-    `字节 ${committedBytes}。未解决资源已记录，可通过增量运行补漏。`
-  );
+  };
+  const workers = await Promise.allSettled(Array.from({ length: 4 }, async () => {
+    try { await worker(); } catch (error) { controller?.abort(); throw error; }
+  }));
+  const rejected = workers.find(w => w.status === "rejected");
+  if (rejected?.status === "rejected") throw rejected.reason;
+  finished = true; await persist();
 }
-
-$("choose").addEventListener("click", async () => {
+$("choose").onclick = async () => { try { directory = await (window as any).showDirectoryPicker({ mode: "readwrite", id: "tapnow-backup" }); $("directory").textContent = directory.name; $<HTMLButtonElement>("backup").disabled = !snapshot; setStatus(`已选择目录：${directory.name}`); } catch (e) { setStatus(String(e)); } };
+$("scan").onclick = async () => { setBusy(true); try { await scan(); } catch (e) { setStatus(String(e)); } finally { setBusy(false); } };
+$("backup").onclick = async () => {
+  if (running) return;
+  setBusy(true);
   try {
-    const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
-    if (!picker) throw new Error("当前 Chrome 不支持目录选择 API。");
-    directory = await picker();
-    $("directory").textContent = directory.name;
-    setStatus(`已选择目录：${directory.name}。现在可以扫描当前画布。`);
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error), true);
-  }
-});
-$("scan").addEventListener("click", async () => {
-  try {
-    setStatus("正在通过当前 TapNow 页面读取画布和分页数据，请稍候。");
-    await scanCanvas();
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error), true);
-  }
-});
-$("backup").addEventListener("click", async () => {
-  try {
-    setStatus("正在写入本地快照。");
-    await saveSnapshot();
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error), true);
-  }
-});
-
-void navigator.storage?.estimate?.().then((estimate) => {
-  const availableBytes = Math.max(
-    0,
-    Number(estimate?.quota || 0) - Number(estimate?.usage || 0)
-  );
-  const budget = calculateStorageBudget(availableBytes);
-  $("budget").textContent = budget.usableBytes
-    ? `${(budget.usableBytes / 1024 ** 3).toFixed(1)} GB（浏览器估算）`
-    : "运行时测量";
-});
+    await navigator.locks.request("tapnow-backup-writer", { ifAvailable: true }, async lock => {
+      if (!lock) throw new Error("另一个备份页正在运行");
+      await backup();
+    });
+  } catch (e) { controller?.abort(); setStatus(`备份未完成：${String(e)}。已完成文件保留，可增量补齐。`); }
+  finally { setBusy(false); }
+};
+$("pause").onclick = () => controller?.abort();
+void refreshCanvasList().catch(e => setStatus(String(e)));
+window.addEventListener("beforeunload", event => { if (running) { event.preventDefault(); event.returnValue = ""; } });

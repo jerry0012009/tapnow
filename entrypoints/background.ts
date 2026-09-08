@@ -58,6 +58,23 @@ async function compressImage(
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener(async (message) => {
+    if (message?.type === "tapnow:prepare-backup") {
+      await browser.declarativeNetRequest.updateSessionRules({
+        removeRuleIds: [9901],
+        addRules: [{
+          id: 9901, priority: 1,
+          action: { type: "modifyHeaders", requestHeaders: [
+            { header: "Referer", operation: "set", value: "https://app.tapnow.ai/" }
+          ] },
+          condition: {
+            requestDomains: ["files.tapnow.media", "files.tapnow.top"],
+            initiatorDomains: [browser.runtime.id],
+            resourceTypes: ["xmlhttprequest"]
+          }
+        }]
+      });
+      return { ok: true };
+    }
     if (message?.type === "tapnow:open-backup") {
       await browser.tabs.create({
         url: browser.runtime.getURL("/backup.html")

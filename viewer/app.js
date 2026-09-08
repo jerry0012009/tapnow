@@ -1,86 +1,71 @@
-const $ = (selector) => document.querySelector(selector);
-const state = { report: null, view: "assets", offset: 0, query: "", graph: null };
-const fmt = (n) => Number(n || 0).toLocaleString("zh-CN");
-const bytes = (n) => { const units = ["B", "KB", "MB", "GB", "TB"]; let i = 0; let v = Number(n || 0); while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; } return `${v.toFixed(i ? 2 : 0)} ${units[i]}`; };
-const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
-async function get(url) { const response = await fetch(url); const data = await response.json(); if (!response.ok) throw new Error(data.error || response.statusText); return data; }
+import { mountGraph } from "./graph.js";
+const $ = selector => document.querySelector(selector);
+const state = { report: null, view: location.hash === "#assets" ? "assets" : "graph", offset: 0, query: "" };
+const fmt = n => Number(n || 0).toLocaleString("zh-CN");
+const bytes = n => `${(Number(n || 0) / 1e9).toFixed(2)} GB`;
+const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let cleanup = null, request = null;
+async function get(url, signal) {
+  const response = await fetch(url, { signal }); const data = await response.json();
+  if (!response.ok) throw new Error(data.error || response.statusText);
+  return data;
+}
 function renderReport(report) {
   state.report = report;
-  const verified = report.verifiedCount || 0, failed = report.failedCount || 0, total = report.uniqueAssetCount || 0;
-  $("#subtitle").textContent = `${report.canvasName || report.canvasId} · 完成于 ${new Date(report.finishedAt).toLocaleString("zh-CN")}`;
+  const verified = report.verifiedCount || 0, total = report.uniqueAssetCount || 0;
+  $("#subtitle").textContent = report.canvasName || report.canvasId || "本地备份";
+  $("#producer").textContent = report.producer === "chrome-extension" ? (report.verification?.passed ? "插件产物 · 已独立复核" : "Chrome 插件产物")
+    : report.producer === "test-fixture" ? "模拟测试数据" : "早期执行器产物";
   $("#metrics").innerHTML = [
-    ["节点", fmt(report.nodeCount)], ["连线", fmt(report.connectionCount)], ["资源引用", fmt(report.referenceCount)],
-    ["唯一目标", fmt(total)], ["已验证保存", fmt(verified)], ["未下载", fmt(failed)], ["已保存字节", bytes(report.verifiedBytes)],
-  ].map(([label, value]) => `<div class="metric"><span class="label">${label}</span><strong>${value}</strong></div>`).join("");
-  const pct = total ? (verified / total * 100) : 0;
-  $("#coverage-bar").style.width = `${pct}%`;
-  $("#coverage-note").textContent = `${pct.toFixed(2)}%`;
-  $("#coverage-text").textContent = `唯一下载目标 ${fmt(total)} 个，已保存并通过字节数与 SHA-256 校验 ${fmt(verified)} 个，仍不可得 ${fmt(failed)} 个。引用数大于目标数是因为同一文件被多个节点或字段引用。`;
+    ["节点", fmt(report.nodeCount)], ["连线", fmt(report.connectionCount)], ["引用", fmt(report.referenceCount)],
+    ["唯一目标", fmt(total)], ["已验证", fmt(verified)], ["未完成", fmt(total - verified)], ["目标字节合计", bytes(report.verifiedBytes)]
+  ].map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`).join("");
+  const date = report.finishedAt || report.updatedAt;
+  $("#coverage-note").textContent = `${total ? (verified / total * 100).toFixed(2) : 0}% · ${date ? new Date(date).toLocaleString("zh-CN") : "时间未记录"}`;
+  $("#coverage-bar").style.width = `${total ? verified / total * 100 : 0}%`;
 }
 const columns = {
-  assets: [["状态", x => `<span class="pill ${x.status === "verified" ? "ok" : "bad"}">${esc(x.status)}</span>`], ["文件", x => `<code>${esc(x.file || "未保存")}</code>`], ["大小", x => bytes(x.bytes)], ["fileId", x => `<code>${esc(x.fileId || "")}</code>`], ["原因", x => esc(x.reason || "")]],
-  references: [["资源", x => esc(x.assetId || "")], ["节点", x => `<code>${esc(x.nodeId)}</code>`], ["字段", x => `<code>${esc(x.fieldPath)}</code>`], ["角色", x => esc(x.role || "")], ["URL / fileId", x => `<code>${esc(x.url || x.fileId || "")}</code>`]],
-  nodes: [["ID", x => `<code>${esc(x.id)}</code>`], ["类型", x => esc(x.type || x.data?.type || "")], ["名称", x => esc(x.name || x.data?.name || "")], ["数据", x => `<details><summary>查看 JSON</summary><pre>${esc(JSON.stringify(x, null, 2))}</pre></details>`]],
-  connections: [["ID", x => `<code>${esc(x.id)}</code>`], ["来源", x => `<code>${esc(x.source || x.source_node_id || x.from_node_id || "")}</code>`], ["目标", x => `<code>${esc(x.target || x.target_node_id || x.to_node_id || "")}</code>`], ["数据", x => `<details><summary>查看 JSON</summary><pre>${esc(JSON.stringify(x, null, 2))}</pre></details>`]],
+  assets: [["状态", x => esc(x.status)], ["本地文件 / SHA-256", x => `<code>${esc(x.file || x.reason || "未保存")}</code><details><summary>资产记录</summary><pre>${esc(JSON.stringify(x, null, 2))}</pre></details>`], ["字节", x => fmt(x.bytes)], ["节点", x => `<button class="link-button" data-node="${esc(x.nodeId)}">${esc(x.nodeId)}</button>`]],
+  references: [["资源", x => `<code>${esc(x.assetId)}</code>`], ["节点", x => `<button class="link-button" data-node="${esc(x.nodeId)}">${esc(x.nodeId)}</button>`], ["字段", x => `<code>${esc(x.fieldPath)}</code>`]],
+  nodes: [["节点", x => `<button class="link-button" data-node="${esc(x.id)}">${esc(x.short_id || x.id)}</button>`], ["名称 / 类型", x => `${esc(x.data?.title || x.name || "")} · ${esc(x.type)}`], ["数据", x => `<details><summary>完整 JSON</summary><pre>${esc(JSON.stringify(x, null, 2))}</pre></details>`]],
+  connections: [["来源", x => `<code>${esc(x.source)}</code>`], ["目标", x => `<code>${esc(x.target)}</code>`], ["连线属性", x => `<details><summary>${esc(x.id)}</summary><pre>${esc(JSON.stringify(x, null, 2))}</pre></details>`]]
 };
-async function renderList() {
-  if (state.view === "audit") return renderAudit();
-  if (state.view === "graph") return renderGraph();
-  const search = `<div class="toolbar"><input id="query" value="${esc(state.query)}" placeholder="搜索当前列表"><button id="search">搜索</button></div>`;
-  const data = await get(`/api/${state.view}?offset=${state.offset}&limit=100&q=${encodeURIComponent(state.query)}`);
-  const defs = columns[state.view];
-  const head = defs.map(([label]) => `<th>${label}</th>`).join("");
-  const rows = data.items.map(item => `<tr>${defs.map(([, render]) => `<td>${render(item)}</td>`).join("")}</tr>`).join("");
-  $("#panel").innerHTML = search + (rows ? `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="empty">没有匹配记录。</p>`) +
-    `<div class="toolbar"><button id="prev" ${state.offset ? "" : "disabled"}>上一页</button><button id="next" ${data.hasMore ? "" : "disabled"}>下一页</button><span>当前 ${state.offset + 1}-${state.offset + data.returned}</span></div>`;
-  $("#search").onclick = () => { state.query = $("#query").value; state.offset = 0; renderList(); };
-  $("#prev").onclick = () => { state.offset = Math.max(0, state.offset - 100); renderList(); };
-  $("#next").onclick = () => { state.offset += 100; renderList(); };
-}
-function nodeLabel(node) {
-  return node.data?.title || node.data?.name || node.data?.prompt || node.short_id || node.id || "未命名节点";
-}
-async function renderGraph() {
-  $("#panel").innerHTML = `<div class="graph-toolbar"><button id="fit">重新适配</button><span id="graph-count">正在读取节点和连线...</span></div><div class="graph" id="graph"><div class="graph-stage" id="graph-stage"></div></div><div class="inspector" id="inspector"><p class="empty">点击节点查看提示词、属性和本地图片。</p></div>`;
-  if (!state.graph) state.graph = await get("/api/graph");
-  const { nodes, connections, assetsByNode } = state.graph;
-  const positions = nodes.map(n => n.position || { x: 0, y: 0 });
-  const minX = Math.min(...positions.map(p => Number(p.x) || 0), 0), minY = Math.min(...positions.map(p => Number(p.y) || 0), 0);
-  const maxX = Math.max(...positions.map(p => Number(p.x) || 0), 1000), maxY = Math.max(...positions.map(p => Number(p.y) || 0), 800);
-  const scale = Math.max(0.22, Math.min(0.65, 1100 / Math.max(1200, maxX - minX + 260)));
-  const width = (maxX - minX + 300) * scale, height = Math.max(620, (maxY - minY + 300) * scale);
-  const stage = $("#graph-stage"); stage.style.width = `${width}px`; stage.style.height = `${height}px`;
-  const coords = new Map();
-  for (const n of nodes) {
-    const p = n.position || { x: 0, y: 0 }, x = ((Number(p.x) || 0) - minX + 120) * scale, y = ((Number(p.y) || 0) - minY + 80) * scale;
-    coords.set(n.id, { x: x + 85 * scale, y: y + 38 * scale });
-  }
-  const edges = connections.map(c => { const a = coords.get(c.source), b = coords.get(c.target); return a && b ? `<line class="graph-edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"></line>` : ""; }).join("");
-  stage.innerHTML = `<svg class="graph-edges" width="${width}" height="${height}">${edges}</svg>` + nodes.map(n => {
-    const p = n.position || { x: 0, y: 0 }, x = ((Number(p.x) || 0) - minX + 120) * scale, y = ((Number(p.y) || 0) - minY + 80) * scale, asset = assetsByNode[n.id], missing = asset && asset.status !== "verified";
-    const kind = n.type === "image" ? "image" : ""; return `<button class="graph-node ${kind} ${missing ? "missing" : ""}" data-node="${esc(n.id)}" style="left:${x}px;top:${y}px;transform:scale(${scale});transform-origin:top left"><div class="placeholder">${n.type === "image" ? (missing ? "未下载图片" : "点击加载本地图片") : esc(n.type || "节点")}</div><div class="node-title">${esc(nodeLabel(n))}</div><div class="node-meta">${esc(n.short_id || n.id)} · ${asset?.status === "verified" ? "已备份" : asset ? "不可得" : "无图片引用"}</div></button>`;
-  }).join("");
-  $("#graph-count").textContent = `${fmt(nodes.length)} 个节点 · ${fmt(connections.length)} 条关系 · 点击节点查看详情`;
-  document.querySelectorAll(".graph-node").forEach(el => el.onclick = () => inspectNode(el.dataset.node));
-  $("#fit").onclick = () => renderGraph();
-}
-function inspectNode(id) {
-  const node = state.graph.nodes.find(n => n.id === id); if (!node) return;
-  const asset = state.graph.assetsByNode[id];
-  const image = asset?.status === "verified" && asset.file ? `<div class="placeholder loaded"><img alt="本地备份图片" src="/api/object?path=${encodeURIComponent(asset.file)}"></div>` : "";
-  const links = state.graph.connections.filter(c => c.source === id || c.target === id).length;
-  $("#inspector").innerHTML = `<h2>${esc(nodeLabel(node))}</h2>${image}<p><b>类型：</b>${esc(node.type)}　<b>短 ID：</b>${esc(node.short_id)}　<b>关系：</b>${links}</p><p><b>提示词：</b>${esc(node.data?.prompt || "无")}</p><details open><summary>完整节点属性</summary><pre>${esc(JSON.stringify(node, null, 2))}</pre></details>${asset ? `<details><summary>对应备份资产</summary><pre>${esc(JSON.stringify(asset, null, 2))}</pre></details>` : ""}`;
-  document.querySelectorAll(".graph-node").forEach(el => el.classList.toggle("selected", el.dataset.node === id));
+async function renderView(nodeId) {
+  request?.abort(); cleanup?.(); cleanup = null;
+  request = new AbortController(); const signal = request.signal;
+  const panel = $("#panel"); panel.classList.toggle("graph-panel", state.view === "graph"); panel.classList.remove("expanded");
+  document.querySelectorAll(".tab").forEach(tab => tab.classList.toggle("active", tab.dataset.view === state.view));
+  try {
+    if (state.view === "graph") { cleanup = await mountGraph(panel, signal, nodeId); return; }
+    if (state.view === "audit") { renderAudit(); return; }
+    panel.innerHTML = `<p class="empty">正在读取...</p>`;
+    const data = await get(`/api/${state.view}?offset=${state.offset}&limit=100&q=${encodeURIComponent(state.query)}`, signal);
+    if (signal.aborted) return;
+    const defs = columns[state.view];
+    panel.innerHTML = `<form id="list-search" class="toolbar"><input aria-label="搜索当前列表" id="query" value="${esc(state.query)}" placeholder="搜索当前列表"><button type="submit">搜索</button></form>
+      <div class="table-wrap"><table><thead><tr>${defs.map(([title]) => `<th>${title}</th>`).join("")}</tr></thead><tbody>${data.items.map(row => `<tr>${defs.map(([, render]) => `<td>${render(row)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+      <div class="toolbar pager"><button id="prev" ${state.offset ? "" : "disabled"}>上一页</button><span>${data.returned ? state.offset + 1 : 0}–${state.offset + data.returned}</span><button id="next" ${data.hasMore ? "" : "disabled"}>下一页</button></div>`;
+    $("#list-search").onsubmit = event => { event.preventDefault(); state.query = $("#query").value; state.offset = 0; void renderView(); };
+    $("#prev").onclick = () => { state.offset = Math.max(0, state.offset - 100); void renderView(); };
+    $("#next").onclick = () => { state.offset += 100; void renderView(); };
+    panel.querySelectorAll("[data-node]").forEach(button => button.onclick = () => { state.view = "graph"; void renderView(button.dataset.node); });
+  } catch (error) { if (!signal.aborted) panel.innerHTML = `<p class="error">读取失败：${esc(error.message)}</p>`; }
 }
 function renderAudit() {
-  const r = state.report;
-  $("#panel").innerHTML = `<h2>本次验收边界</h2>
-  <details open><summary>本次确实使用了插件吗？</summary><p>登录态、页面内“备份”入口、扩展内容脚本和后台媒体请求已在真实 Chromium 中验证；但本次 16.09 GB 大画布全量保存由同一登录会话的真实执行器完成，尚未证明扩展备份页的 File System Access 目录写入可以承载同等规模。因此不能把本次全量结果表述为“全部由插件 UI 写入”。</p></details>
-  <details open><summary>未下载的 ${fmt(r.failedCount)} 个是什么？</summary><p>均为 file-ID 派生地址在有限重试和反查后持续 HTTP 404 的对象，状态已记录为 unavailable-after-recovery；任务没有因此中断，后续增量备份可以再次复查。</p></details>
-  <details open><summary>是否与网页内容完全相等、是否遗漏？</summary><p>对本次单画布，节点、连线和资源引用的 API 分页已完整收集，页数与游标没有发现重复或中断；已发现 5,776 条引用、2,489 个唯一目标。不能声称整个工作区无遗漏，因为本次没有枚举并测试整个工作区，也不能证明服务端未暴露的历史对象仍可见。</p></details>
-  <details><summary>报告原始 JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+  const r = state.report, plugin = r.producer === "chrome-extension";
+  $("#panel").innerHTML = `<h2>备份证据与范围</h2>
+    <dl class="property-list"><dt>产物来源</dt><dd>${plugin ? "Chrome 插件 / File System Access" : "早期真实登录会话执行器（非插件全量写入）"}</dd><dt>任务状态</dt><dd>${esc(r.status || "历史快照")}</dd><dt>范围</dt><dd>单画布</dd><dt>目标字节合计</dt><dd>${fmt(r.verifiedBytes)} 字节</dd><dt>去重物理文件</dt><dd>${fmt(r.physicalFileCount)} 个 · ${fmt(r.physicalBytes)} 字节</dd><dt>待处理</dt><dd>${fmt(r.pendingCount)}</dd><dt>失败</dt><dd>${fmt(r.failedCount)}</dd></dl>
+    ${r.verification ? `<p>独立磁盘复核：${r.verification.passed ? "通过" : "未通过"} · ${fmt(r.verification.verifiedUniqueFiles)} 个物理文件 · ${esc(r.verification.verifiedAt)}</p><details><summary>独立复核及基线对照</summary><pre>${esc(JSON.stringify(r.verification, null, 2))}</pre></details>` : ""}
+    <p>“已验证”是备份清单记录的文件大小与 SHA-256 校验结果。预览只读取本地文件，不会访问 TapNow。引用数、唯一目标数和哈希去重后的物理文件数不是同一口径。</p>
+    <p>节点与连线来自该画布的分页快照。没有完成整个工作区和网页各类历史来源的独立对照，不能据此宣称所有工作区零遗漏。</p>
+    <details><summary>完整报告 JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
 }
-async function load() { try { renderReport(await get("/api/report")); await renderList(); } catch (e) { $("#panel").innerHTML = `<p class="empty">${esc(e.message)}</p>`; } }
-document.querySelectorAll(".tab").forEach((tab) => tab.onclick = () => { document.querySelectorAll(".tab").forEach(x => x.classList.remove("active")); tab.classList.add("active"); state.view = tab.dataset.view; state.offset = 0; state.query = ""; renderList(); });
+async function load() {
+  try { renderReport(await get("/api/report")); await renderView(); }
+  catch (error) { $("#panel").innerHTML = `<p class="error">${esc(error.message)}</p>`; }
+}
+document.querySelectorAll(".tab").forEach(tab => tab.onclick = () => {
+  state.view = tab.dataset.view; state.offset = 0; state.query = ""; history.replaceState(null, "", `#${state.view}`); void renderView();
+});
 $("#refresh").onclick = load;
-load();
+void load();

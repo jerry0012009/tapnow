@@ -8,6 +8,7 @@ import {
   STORAGE_BUDGET_FRACTION
 } from "../utils/backup/storage";
 import { createCheckpoint, transitionCheckpoint } from "../utils/backup/checkpoint";
+import { indexReferences } from "../utils/backup/engine";
 
 test("collectPages drains cursor pages and reports duplicates", async () => {
   const pages = new Map<string | null, { items: Array<{ id: string }>; cursor: string | null }>([
@@ -54,9 +55,10 @@ test("discoverAssetReferences keeps alternatives, history and file ids", () => {
     ],
     historyLocalQueues: [{ src: "https://files.tapnow.media/history.jpg" }]
   });
-  assert.equal(references.length, 7);
+  assert.equal(references.length, 5);
   assert.equal(references[0].url, "https://files.tapnow.media/current.jpg");
-  assert.equal(references[0].fileId, "file-current");
+  assert.equal(references[0].fileId, null);
+  assert.equal(references.find(r => r.fieldPath === "data.currentSourceFileId")?.fileId, "file-current");
   assert.equal(references.some((item) => item.role === "alternative"), true);
   assert.equal(references.some((item) => item.role === "history"), true);
 });
@@ -84,4 +86,16 @@ test("checkpoint transitions preserve resumable state", () => {
   assert.equal(next.nextAssetIndex, 4);
   assert.deepEqual(next.pendingAssetIds, ["asset-5"]);
   assert.equal(next.committedBytes, 123);
+});
+
+test("indexReferences keeps distinct targets and stable IDs independent of order", () => {
+  const indexed = indexReferences([
+    { referenceId: "r1", canvasId: "c", nodeId: "n", fieldPath: "data.src", role: "current", ordinal: 1, fileId: "f1", url: "https://files.tapnow.media/a", source: "api", status: "discovered" },
+    { referenceId: "r2", canvasId: "c", nodeId: "n", fieldPath: "data.currentSourceFileId", role: "current", ordinal: 2, fileId: "f1", url: null, source: "api", status: "discovered" },
+    { referenceId: "r3", canvasId: "c", nodeId: "n", fieldPath: "data.options[0]", role: "alternative", ordinal: 3, fileId: null, url: "https://files.tapnow.media/a", source: "api", status: "discovered" }
+  ]);
+  assert.equal(indexed.assets.length, 3);
+  assert.equal(new Set(indexed.references.map(ref => ref.assetId)).size, 3);
+  const reversed = indexReferences([...indexed.references].reverse());
+  assert.deepEqual(indexed.assets.map(a => a.assetId).sort(), reversed.assets.map(a => a.assetId).sort());
 });

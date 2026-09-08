@@ -3,9 +3,9 @@ import { defineConfig } from "wxt";
 export default defineConfig({
   manifest: {
     name: "TapNow Companion",
-    version: "0.1.11",
-    description: "A lightweight focused-node review assistant for TapNow Canvas.",
-    permissions: ["storage", "tabs"],
+    version: "0.1.12",
+    description: "Back up TapNow canvas assets to a chosen local directory, with optional focused-node review.",
+    permissions: ["storage", "tabs", "declarativeNetRequestWithHostAccess"],
     host_permissions: [
       "https://app.tapnow.ai/*",
       "https://files.tapnow.media/*",
