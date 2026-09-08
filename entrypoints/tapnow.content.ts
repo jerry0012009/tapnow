@@ -239,6 +239,7 @@ export default defineContentScript({
           .footer { display: flex; gap: 8px; padding: 14px 16px; border-top: 1px solid #e2e8f0; }
           button.action { flex: 1; min-height: 38px; border: 1px solid #cbd5e1; border-radius: 7px; cursor: pointer; font: 600 13px system-ui, sans-serif; }
           button.primary { background: #0f766e; color: white; border-color: #0f766e; }
+          button.backup { background: #1d4ed8; color: white; border-color: #1d4ed8; }
           .notice { color: #64748b; font-size: 12px; margin-top: 10px; }
         </style>
         <button class="launcher" type="button" title="检测当前聚焦节点">副驾驶</button>
@@ -250,6 +251,7 @@ export default defineContentScript({
           <div class="body"></div>
           <footer class="footer">
             <button class="action close-action" type="button">关闭</button>
+            <button class="action backup" type="button">备份</button>
             <button class="action primary detect" type="button">检测</button>
           </footer>
         </section>
@@ -261,6 +263,7 @@ export default defineContentScript({
       const body = shadow.querySelector<HTMLElement>(".body")!;
       const close = shadow.querySelector<HTMLButtonElement>(".close")!;
       const closeAction = shadow.querySelector<HTMLButtonElement>(".close-action")!;
+      const backupButton = shadow.querySelector<HTMLButtonElement>(".backup")!;
       const detectButton = shadow.querySelector<HTMLButtonElement>(".detect")!;
 
       function textOf(element: Element | null | undefined): string {
@@ -1826,6 +1829,9 @@ export default defineContentScript({
       });
       close.addEventListener("click", closePanel);
       closeAction.addEventListener("click", closePanel);
+      backupButton.addEventListener("click", () => {
+        void browser.runtime.sendMessage({ type: "tapnow:open-backup" });
+      });
       detectButton.addEventListener("click", () => void detect());
 
       document.addEventListener("focusin", (event) => {

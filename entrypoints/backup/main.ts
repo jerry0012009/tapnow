@@ -143,7 +143,12 @@ async function writeBytes(
 }
 
 async function downloadAsset(tabId: number, asset: ReturnType<typeof discoverAssetReferences>[number]) {
-  if (!asset.url) {
+  const sourceUrl =
+    asset.url ||
+    (asset.fileId
+      ? `https://files.tapnow.media/api/conversation/storage/uploads/${encodeURIComponent(asset.fileId)}`
+      : null);
+  if (!sourceUrl) {
     return {
       ...asset,
       status: "unavailable-after-recovery" as const,
@@ -155,9 +160,9 @@ async function downloadAsset(tabId: number, asset: ReturnType<typeof discoverAss
   let totalBytes: number | null = null;
   let metadata: Record<string, unknown> = {};
   for (let attempt = 0; attempt < 10; attempt++) {
-    const response = await browser.tabs.sendMessage(tabId, {
+    const response = await browser.runtime.sendMessage({
       type: "tapnow:backup-fetch-asset",
-      url: asset.url,
+      url: sourceUrl,
       start: offset,
       end: offset + 4_000_000 - 1
     });

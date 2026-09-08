@@ -58,6 +58,74 @@ async function compressImage(
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener(async (message) => {
+    if (message?.type === "tapnow:open-backup") {
+      await browser.tabs.create({
+        url: browser.runtime.getURL("/backup.html")
+      });
+      return { ok: true };
+    }
+
+    if (message?.type === "tapnow:backup-fetch-asset") {
+      try {
+        const source = new URL(String(message.url || ""));
+        if (
+          source.protocol !== "https:" ||
+          !(
+            source.hostname === "files.tapnow.media" ||
+            source.hostname.endsWith(".tapnow.media") ||
+            source.hostname.endsWith(".tapnow.top")
+          )
+        ) {
+          return { ok: false, error: "备份媒体地址不在允许的媒体域名内。" };
+        }
+        const start = Math.max(0, Number(message.start || 0));
+        const end = Math.max(start, Number(message.end || start + 4_000_000 - 1));
+        const response = await fetch(source, {
+          headers: {
+            Referer: "https://app.tapnow.ai/",
+            Range: `bytes=${start}-${end}`
+          },
+          redirect: "follow"
+        });
+        if (!response.ok && response.status !== 206) {
+          return { ok: false, error: `媒体请求失败 HTTP ${response.status}` };
+        }
+        const body = new Uint8Array(await response.arrayBuffer());
+        const contentRange = response.headers.get("content-range") || "";
+        const rangeMatch = contentRange.match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
+        const actualStart = rangeMatch ? Number(rangeMatch[1]) : start;
+        const totalBytes =
+          rangeMatch && rangeMatch[3] !== "*"
+            ? Number(rangeMatch[3])
+            : actualStart === 0
+              ? body.length
+              : null;
+        const chunk =
+          actualStart === start ? body : body.slice(start, end + 1);
+        let binary = "";
+        for (let index = 0; index < chunk.length; index += 0x8000) {
+          binary += String.fromCharCode(...chunk.subarray(index, index + 0x8000));
+        }
+        const nextOffset = start + chunk.length;
+        return {
+          ok: true,
+          status: response.status,
+          contentType: response.headers.get("content-type") || "application/octet-stream",
+          etag: response.headers.get("etag"),
+          lastModified: response.headers.get("last-modified"),
+          totalBytes,
+          nextOffset,
+          complete: totalBytes !== null ? nextOffset >= totalBytes : chunk.length === 0,
+          dataBase64: btoa(binary)
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        };
+      }
+    }
+
     if (message?.type === "tapnow:capture-image") {
       try {
         const source = new URL(String(message.url || ""));

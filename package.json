@@ -6,6 +6,7 @@
   "scripts": {
     "audit": "node scripts/audit-canvas.mjs",
     "export": "node scripts/export-canvas.mjs",
+    "backup:real-canvas": "node scripts/backup-real-canvas.mjs",
     "record": "node scripts/record-session.mjs",
     "extension:dev": "wxt --browser chrome",
     "extension:build": "wxt build --browser chrome --mv3",
