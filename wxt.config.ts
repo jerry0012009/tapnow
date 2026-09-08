@@ -5,7 +5,7 @@ export default defineConfig({
     name: "TapNow Companion",
     version: "0.1.11",
     description: "A lightweight focused-node review assistant for TapNow Canvas.",
-    permissions: ["storage"],
+    permissions: ["storage", "tabs"],
     host_permissions: [
       "https://app.tapnow.ai/*",
       "https://files.tapnow.media/*",

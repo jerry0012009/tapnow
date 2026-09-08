@@ -56,6 +56,7 @@ app.innerHTML = `
     <div class="hint">0.1 支持 OpenAI/ACU HTTPS API；Key 不会同步到 Chrome 账号。</div>
   </div>
   <button id="save" type="button">保存设置</button>
+  <button id="backup" type="button" style="background:#0f766e">打开备份中心</button>
   <div id="status" role="status"></div>
 `;
 
@@ -96,4 +97,8 @@ $("save").addEventListener("click", async () => {
   await browser.storage.sync.set(next);
   if (apiKey) await browser.storage.local.set({ apiKey });
   $("status").textContent = "已保存。刷新 TapNow 页面后生效。";
+});
+
+$("backup").addEventListener("click", async () => {
+  await browser.tabs.create({ url: browser.runtime.getURL("/backup.html") });
 });

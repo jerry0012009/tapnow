@@ -76,6 +76,97 @@ export default defineContentScript({
   matches: ["https://app.tapnow.ai/*"],
   runAt: "document_idle",
   main() {
+    browser.runtime.onMessage.addListener(async (message) => {
+      if (
+        message?.type !== "tapnow:backup-fetch-json" &&
+        message?.type !== "tapnow:backup-fetch-asset"
+      ) {
+        return undefined;
+      }
+      if (message?.type === "tapnow:backup-fetch-asset") {
+        try {
+          const source = new URL(String(message.url || ""));
+          if (source.protocol !== "https:") {
+            return { ok: false, error: "资产地址必须使用 HTTPS。" };
+          }
+          const start = Math.max(0, Number(message.start || 0));
+          const requestedEnd = Math.max(start, Number(message.end || start + 4_000_000 - 1));
+          const response = await fetch(source, {
+            credentials: "include",
+            headers: { Range: `bytes=${start}-${requestedEnd}` }
+          });
+          if (!response.ok && response.status !== 206) {
+            return { ok: false, error: `资产请求 HTTP ${response.status}` };
+          }
+          const body = new Uint8Array(await response.arrayBuffer());
+          const contentRange = response.headers.get("content-range") || "";
+          const rangeMatch = contentRange.match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
+          const actualStart = rangeMatch ? Number(rangeMatch[1]) : start;
+          const totalBytes =
+            rangeMatch && rangeMatch[3] !== "*"
+              ? Number(rangeMatch[3])
+              : actualStart === 0
+                ? body.length
+                : null;
+          const chunk = actualStart === start ? body : body.slice(start, requestedEnd + 1);
+          let binary = "";
+          for (let index = 0; index < chunk.length; index += 0x8000) {
+            binary += String.fromCharCode(...chunk.subarray(index, index + 0x8000));
+          }
+          const nextOffset = start + chunk.length;
+          return {
+            ok: true,
+            status: response.status,
+            contentType: response.headers.get("content-type") || "application/octet-stream",
+            etag: response.headers.get("etag"),
+            lastModified: response.headers.get("last-modified"),
+            totalBytes,
+            nextOffset,
+            complete: totalBytes !== null ? nextOffset >= totalBytes : chunk.length === 0,
+            dataBase64: btoa(binary)
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          };
+        }
+      }
+      const endpoint = String(message.endpoint || "");
+      if (!endpoint.startsWith("/api/")) {
+        return { ok: false, error: "备份请求不是 TapNow API 路径。" };
+      }
+      try {
+        const accessToken = localStorage.getItem("access_token");
+        if (!accessToken) {
+          return { ok: false, error: "TapNow 页面没有可用的登录会话。" };
+        }
+        const response = await fetch(new URL(endpoint, location.origin), {
+          credentials: "include",
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        const text = await response.text();
+        let body: unknown = text;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          // Preserve a short response preview for diagnostics without storing credentials.
+        }
+        return {
+          ok: response.ok,
+          status: response.status,
+          body: response.ok ? body : undefined,
+          error: response.ok ? undefined : `TapNow API HTTP ${response.status}`,
+          responsePreview: response.ok ? undefined : text.slice(0, 500)
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        };
+      }
+    });
+
     const mount = () => {
       if (
         !location.pathname.startsWith("/canvas/") ||
