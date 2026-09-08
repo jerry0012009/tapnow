@@ -34,6 +34,19 @@ td code { overflow-wrap:anywhere; word-break:break-word; }
 .pill { display:inline-block; border-radius: 12px; padding: 3px 8px; font-size: 12px; background:#e8edf0; }
 .pill.ok { color:#0b6849; background:#dff4e9; }.pill.bad { color:#9a3d1c; background:#ffeadf; }
 .empty { color:#63717d; padding: 25px 0; }
+.graph-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+.graph { position:relative; height:680px; overflow:auto; background:#f0f4f5; border:1px solid #d9e0e5; }
+.graph-stage { position:relative; min-width:100%; min-height:100%; transform-origin:top left; }
+.graph-edges { position:absolute; inset:0; pointer-events:none; overflow:visible; }
+.graph-edge { stroke:#9ab0bc; stroke-width:1.2; opacity:.65; }
+.graph-node { position:absolute; width:170px; min-height:76px; padding:10px; border:1px solid #9fb1ba; border-radius:6px; background:#fff; box-shadow:0 2px 7px #23313d18; cursor:pointer; overflow:hidden; }
+.graph-node.image { border-top:4px solid #17805c; }.graph-node.missing { border-top-color:#d16a37; }
+.graph-node.selected { outline:3px solid #f2b84b; }
+.node-title { font-size:12px; font-weight:750; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.node-meta { margin-top:6px; color:#63717d; font-size:11px; line-height:1.35; }
+.placeholder { height:35px; margin-bottom:6px; display:grid; place-items:center; background:#e7eef0; color:#58717c; font-size:11px; }
+.placeholder.loaded { padding:0; background:#dce6e8; }.placeholder img { display:block; width:100%; height:100%; object-fit:cover; }
+.inspector { margin-top:12px; border-top:1px solid #e0e6ea; padding-top:14px; }
 details { border-top: 1px solid #e0e6ea; padding: 12px 0; }
 summary { cursor:pointer; font-weight:700; }
 pre { white-space: pre-wrap; overflow-wrap:anywhere; background:#f5f7f8; padding:12px; border-radius:5px; font-size:12px; }

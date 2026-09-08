@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { report: null, view: "assets", offset: 0, query: "" };
+const state = { report: null, view: "assets", offset: 0, query: "", graph: null };
 const fmt = (n) => Number(n || 0).toLocaleString("zh-CN");
 const bytes = (n) => { const units = ["B", "KB", "MB", "GB", "TB"]; let i = 0; let v = Number(n || 0); while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; } return `${v.toFixed(i ? 2 : 0)} ${units[i]}`; };
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
@@ -25,6 +25,7 @@ const columns = {
 };
 async function renderList() {
   if (state.view === "audit") return renderAudit();
+  if (state.view === "graph") return renderGraph();
   const search = `<div class="toolbar"><input id="query" value="${esc(state.query)}" placeholder="搜索当前列表"><button id="search">搜索</button></div>`;
   const data = await get(`/api/${state.view}?offset=${state.offset}&limit=100&q=${encodeURIComponent(state.query)}`);
   const defs = columns[state.view];
@@ -35,6 +36,41 @@ async function renderList() {
   $("#search").onclick = () => { state.query = $("#query").value; state.offset = 0; renderList(); };
   $("#prev").onclick = () => { state.offset = Math.max(0, state.offset - 100); renderList(); };
   $("#next").onclick = () => { state.offset += 100; renderList(); };
+}
+function nodeLabel(node) {
+  return node.data?.title || node.data?.name || node.data?.prompt || node.short_id || node.id || "未命名节点";
+}
+async function renderGraph() {
+  $("#panel").innerHTML = `<div class="graph-toolbar"><button id="fit">重新适配</button><span id="graph-count">正在读取节点和连线...</span></div><div class="graph" id="graph"><div class="graph-stage" id="graph-stage"></div></div><div class="inspector" id="inspector"><p class="empty">点击节点查看提示词、属性和本地图片。</p></div>`;
+  if (!state.graph) state.graph = await get("/api/graph");
+  const { nodes, connections, assetsByNode } = state.graph;
+  const positions = nodes.map(n => n.position || { x: 0, y: 0 });
+  const minX = Math.min(...positions.map(p => Number(p.x) || 0), 0), minY = Math.min(...positions.map(p => Number(p.y) || 0), 0);
+  const maxX = Math.max(...positions.map(p => Number(p.x) || 0), 1000), maxY = Math.max(...positions.map(p => Number(p.y) || 0), 800);
+  const scale = Math.max(0.22, Math.min(0.65, 1100 / Math.max(1200, maxX - minX + 260)));
+  const width = (maxX - minX + 300) * scale, height = Math.max(620, (maxY - minY + 300) * scale);
+  const stage = $("#graph-stage"); stage.style.width = `${width}px`; stage.style.height = `${height}px`;
+  const coords = new Map();
+  for (const n of nodes) {
+    const p = n.position || { x: 0, y: 0 }, x = ((Number(p.x) || 0) - minX + 120) * scale, y = ((Number(p.y) || 0) - minY + 80) * scale;
+    coords.set(n.id, { x: x + 85 * scale, y: y + 38 * scale });
+  }
+  const edges = connections.map(c => { const a = coords.get(c.source), b = coords.get(c.target); return a && b ? `<line class="graph-edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"></line>` : ""; }).join("");
+  stage.innerHTML = `<svg class="graph-edges" width="${width}" height="${height}">${edges}</svg>` + nodes.map(n => {
+    const p = n.position || { x: 0, y: 0 }, x = ((Number(p.x) || 0) - minX + 120) * scale, y = ((Number(p.y) || 0) - minY + 80) * scale, asset = assetsByNode[n.id], missing = asset && asset.status !== "verified";
+    const kind = n.type === "image" ? "image" : ""; return `<button class="graph-node ${kind} ${missing ? "missing" : ""}" data-node="${esc(n.id)}" style="left:${x}px;top:${y}px;transform:scale(${scale});transform-origin:top left"><div class="placeholder">${n.type === "image" ? (missing ? "未下载图片" : "点击加载本地图片") : esc(n.type || "节点")}</div><div class="node-title">${esc(nodeLabel(n))}</div><div class="node-meta">${esc(n.short_id || n.id)} · ${asset?.status === "verified" ? "已备份" : asset ? "不可得" : "无图片引用"}</div></button>`;
+  }).join("");
+  $("#graph-count").textContent = `${fmt(nodes.length)} 个节点 · ${fmt(connections.length)} 条关系 · 点击节点查看详情`;
+  document.querySelectorAll(".graph-node").forEach(el => el.onclick = () => inspectNode(el.dataset.node));
+  $("#fit").onclick = () => renderGraph();
+}
+function inspectNode(id) {
+  const node = state.graph.nodes.find(n => n.id === id); if (!node) return;
+  const asset = state.graph.assetsByNode[id];
+  const image = asset?.status === "verified" && asset.file ? `<div class="placeholder loaded"><img alt="本地备份图片" src="/api/object?path=${encodeURIComponent(asset.file)}"></div>` : "";
+  const links = state.graph.connections.filter(c => c.source === id || c.target === id).length;
+  $("#inspector").innerHTML = `<h2>${esc(nodeLabel(node))}</h2>${image}<p><b>类型：</b>${esc(node.type)}　<b>短 ID：</b>${esc(node.short_id)}　<b>关系：</b>${links}</p><p><b>提示词：</b>${esc(node.data?.prompt || "无")}</p><details open><summary>完整节点属性</summary><pre>${esc(JSON.stringify(node, null, 2))}</pre></details>${asset ? `<details><summary>对应备份资产</summary><pre>${esc(JSON.stringify(asset, null, 2))}</pre></details>` : ""}`;
+  document.querySelectorAll(".graph-node").forEach(el => el.classList.toggle("selected", el.dataset.node === id));
 }
 function renderAudit() {
   const r = state.report;

@@ -86,6 +86,15 @@ async function readStatusSummary() {
   return counts;
 }
 
+async function readAllNdjson(name) {
+  const file = safePath(files[name]);
+  if (!file) throw new Error("invalid backup path");
+  const text = await fs.readFile(file, "utf8");
+  return text.split("\n").filter(Boolean).flatMap((line) => {
+    try { return [JSON.parse(line)]; } catch { return []; }
+  });
+}
+
 async function serveStatic(req, res, pathname) {
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
   const file = path.resolve(viewerRoot, relative);
@@ -115,6 +124,26 @@ const server = http.createServer(async (req, res) => {
       });
     }
     if (url.pathname === "/api/canvas") return json(res, await readJson("canvas"));
+    if (url.pathname === "/api/graph") {
+      const [nodes, connections, assets] = await Promise.all([
+        readAllNdjson("nodes"),
+        readAllNdjson("connections"),
+        readAllNdjson("assets"),
+      ]);
+      const assetsByNode = {};
+      for (const asset of assets) {
+        if (asset.nodeId && !assetsByNode[asset.nodeId]) assetsByNode[asset.nodeId] = asset;
+      }
+      return json(res, { nodes, connections, assetsByNode });
+    }
+    if (url.pathname === "/api/object") {
+      const relative = url.searchParams.get("path") || "";
+      const file = safePath(relative);
+      if (!file || !relative.startsWith("objects/")) return json(res, { error: "invalid object path" }, 400);
+      const body = await fs.readFile(file);
+      res.writeHead(200, { "content-type": "application/octet-stream", "cache-control": "public, max-age=3600" });
+      return res.end(body);
+    }
     const match = url.pathname.match(/^\/api\/(nodes|connections|references|assets)$/);
     if (match) {
       const offset = Math.max(0, Number(url.searchParams.get("offset") || 0));
