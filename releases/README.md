@@ -1,5 +1,8 @@
 # TapNow Companion 0.1.12
 
+[GitHub Release 与下载](https://github.com/jerry0012009/tapnow/releases/tag/v0.1.12)。
+本版标为 Windows 试用预发布版，安装步骤及已知限制见 [版本说明](v0.1.12.md)。
+
 `tapnow-companion-0.1.12-chrome.zip` 是已经构建好的 Chrome 扩展包，普通
 试用用户不需要安装 Node.js、npm 或运行任何构建命令。
 
