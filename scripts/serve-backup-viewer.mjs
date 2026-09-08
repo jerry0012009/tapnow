@@ -74,7 +74,10 @@ async function readStatusSummary() {
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     try {
-      const status = JSON.parse(line).status || "unknown";
+      const item = JSON.parse(line);
+      const status = item.status === "retryable" && /^HTTP (404|410)\b/.test(item.reason || "")
+        ? "unavailable-after-recovery"
+        : item.status || "unknown";
       counts[status] = (counts[status] || 0) + 1;
     } catch {
       // Ignore a truncated final line; the viewer remains usable during a live run.
