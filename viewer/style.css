@@ -45,6 +45,7 @@ main{padding:0 24px 24px;max-width:2000px;margin:0 auto}
 h3{font-size:12px;font-weight:700;margin:0 0 10px}.section-title{display:flex;justify-content:space-between;gap:10px}.section-title span{font-size:10px;color:#798c83}
 .media-preview{min-height:140px;background:#f0f4f1;border:1px dashed #c9d9ce;border-radius:5px;margin:0 0 10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:12px;text-align:center;color:#779484;font-size:11px}
 .media-preview img,.media-preview video{display:block;width:100%;height:auto;max-height:330px;object-fit:contain}
+.media-preview img{background:#e7efea}
 .media-preview audio{width:100%}.media-preview>svg{width:28px;height:28px}
 .download-link{color:#267861;font-size:11px}
 .asset-row{border-bottom:1px solid #e7ede9;padding:5px 0}

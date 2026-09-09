@@ -72,6 +72,7 @@ test("coverage audit counts roles, statuses and nested hidden fields", () => {
   assert.equal(index.coverage.assetsWithFile, 1);
   assert.equal(index.coverage.failedAssets, 1);
   assert.deepEqual(index.graph.nodes[0].roleCounts, { "当前": 1, "备选": 1, "历史": 1 });
+  assert.deepEqual(index.graph.nodes[0].assetRoleCounts, { "当前": 1, "备选": 1, "历史": 1 });
   assert.ok(index.coverage.hiddenFieldCount >= 2);
   assert.ok(index.coverage.dataFieldCounts["data.options"]);
 });

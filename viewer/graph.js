@@ -155,14 +155,49 @@ export async function mountGraph(panel, signal, initialId) {
         if (index < 0) index = detail.assets.findIndex(item => item.asset?.canPreview);
         if (index >= 0) loadAsset(index);
         else if (detail.assets.length) $("preview").lastElementChild.textContent = "尚无已保存文件，详见下方状态与原因";
+        void loadNodeGallery(id, detail);
       }
     } catch (error) {
       if (version === detailVersion && !lifecycle.signal.aborted) $("inspector").innerHTML = `<p class="error">${escape(error.message)}</p>`;
     }
   }
+  async function loadNodeGallery(id, nodeDetail) {
+    const candidates = nodeDetail.assets
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.asset?.canPreview && /^image\/(png|jpeg|webp|gif|avif)(;|$)/.test(item.asset.contentType || ""));
+    if (!candidates.length || !cy.getElementById(id).length) return;
+    const token = selected;
+    const loaded = await Promise.all(candidates.map(async ({ item }) => {
+      try {
+        const resource = await mediaSource(item.asset);
+        const image = new Image();
+        await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = resource.url; });
+        resource.release();
+        return image;
+      } catch { return null; }
+    }));
+    if (token !== selected || lifecycle.signal.aborted) return;
+    const images = loaded.filter(Boolean).slice(0, 6);
+    if (!images.length) return;
+    const width = 640, height = 420, columns = images.length === 1 ? 1 : images.length === 2 ? 2 : 3;
+    const tileWidth = Math.floor(width / columns), tileHeight = images.length === 1 ? height : 210;
+    const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = images.length === 1 ? height : tileHeight * Math.ceil(images.length / columns);
+    const context = canvas.getContext("2d"); if (!context) return;
+    context.fillStyle = "#e7efea"; context.fillRect(0, 0, canvas.width, canvas.height);
+    images.forEach((image, index) => {
+      const x = (index % columns) * tileWidth, y = Math.floor(index / columns) * tileHeight;
+      const scale = Math.max(tileWidth / image.naturalWidth, tileHeight / image.naturalHeight);
+      const w = image.naturalWidth * scale, h = image.naturalHeight * scale;
+      context.drawImage(image, x + (tileWidth - w) / 2, y + (tileHeight - h) / 2, w, h);
+    });
+    cy.getElementById(id).addClass("with-media").data("mediaLabel", `${nodes.get(id)?.shortId || "节点"} · ${images.length} 张本地图片`);
+    cy.getElementById(id).style("background-image", `url("${canvas.toDataURL("image/webp", .86)}")`);
+  }
   function renderDetail() {
     const n = detail.node, summary = nodes.get(n.id);
-    const roleSummary = Object.entries(summary.roleCounts || {}).map(([role, count]) => `${escape(role)} ${format(count)}`).join(" · ") || "无资源角色引用";
+    const roleSummary = Object.entries(summary.assetRoleCounts || {}).map(([role, count]) => `${escape(role)} ${format(count)}`).join(" · ") || "无资源角色引用";
+    const physicalFiles = new Set(detail.assets.map(({ asset }) => asset?.file || asset?.sha256).filter(Boolean)).size;
+    const roleTargets = Object.entries(summary.assetRoleCounts || {}).map(([role, count]) => `${escape(role)} ${format(count)} 个目标`).join(" · ") || "无资源角色目标";
     const links = (items, direction) => items.map(c => {
       const target = direction === "in" ? c.source : c.target, other = nodes.get(target);
       return `<button class="relation-link" data-jump="${escape(target)}">${direction === "in" ? "←" : "→"} ${escape(other?.shortId || target)} · ${escape(other?.title || "端点缺失")}</button>`;
@@ -170,12 +205,12 @@ export async function mountGraph(panel, signal, initialId) {
     const fieldTable = obj => Object.entries(obj || {}).map(([key, value]) => `<dt>${escape(key)}</dt><dd>${escape(typeof value === "object" ? JSON.stringify(value) : value)}</dd>`).join("");
     $("inspector").innerHTML = `
       <div class="inspector-heading"><span class="node-badge">${escape(n.short_id || n.type)} · ${escape(kinds[n.type] || n.type)}</span><span class="status ${summary.status}">${summary.status === "text" ? "节点已保存" : labels[summary.status]}</span><h2>${escape(n.data?.title || summary.title)}</h2><code>${escape(n.id)}</code></div>
-      <div class="inspector-section"><div class="section-title"><h3>本地资源</h3><span>${detail.assets.length} 目标 · ${detail.referenceCount} 引用</span></div><p class="asset-role-summary">${roleSummary}</p>
+      <div class="inspector-section"><div class="section-title"><h3>本地资源</h3><span>${detail.assets.length} 个不同目标 · ${detail.referenceCount} 个字段引用</span></div><p class="asset-role-summary"><strong>${detail.assets.length} 个资源目标</strong> · ${physicalFiles} 个不同本地文件 · ${detail.referenceCount} 个字段引用<br>资源角色目标：${roleTargets}<br><small>字段引用可能重复指向同一目标；目标数按资源 ID 计算，物理文件数按本地文件计算。</small></p>
       <div id="preview" class="media-preview"><i data-lucide="${n.type === "image" ? "image" : n.type === "video" ? "film" : n.type === "audio" ? "music" : "file-text"}"></i><span>${detail.assets.length ? `${detail.assets.length} 个资源目标 · 尚未预览` : `${escape(kinds[n.type] || n.type)} · 无媒体引用`}</span></div>
       <div id="asset-list">${detail.assets.map(({ asset, references }, i) => `<div class="asset-row">
         <button class="asset-load" data-asset="${i}" ${asset?.canPreview ? "" : "disabled"}>
           <i data-lucide="${asset?.canPreview ? "image" : "file-warning"}"></i>
-          <span>${[...new Set(references.map(r => r.role))].map(escape).join(" · ")}<small>${escape(asset?.status === "queued" && asset?.canPreview ? "已保存 · 待复核" : labels[asset?.status] || "未解析")} ${asset?.bytes ? ` · ${size(asset.bytes)}` : ""}</small></span>
+          <span><strong>${kinds[n.type] || "资源"} ${i + 1}/${detail.assets.length}</strong> · ${[...new Set(references.map(r => r.role))].map(escape).join(" · ")}<small>${escape(asset?.status === "queued" && asset?.canPreview ? "已保存 · 待复核" : labels[asset?.status] || "未解析")} ${asset?.bytes ? ` · ${size(asset.bytes)}` : ""}</small></span>
         </button>
         <details><summary>文件与引用</summary><code>${escape(asset?.file || asset?.reason || "未保存")}</code><dl class="property-list"><dt>SHA-256</dt><dd>${escape(asset?.sha256 || "无")}</dd><dt>资源 ID</dt><dd>${escape(asset?.assetId || asset?.referenceId || "")}</dd><dt>状态</dt><dd>${escape(asset?.status || "未解析")}</dd></dl>${references.map(r => `<code class="field-path">${escape(r.fieldPath)}</code>`).join("")}</details>
       </div>`).join("")}</div></div>
@@ -233,7 +268,13 @@ export async function mountGraph(panel, signal, initialId) {
   }
   cy.on("tap", "node", event => selectNode(event.target.id(), false, true));
   $("node-search").oninput = filterNodes;
-  $("node-search").onkeydown = event => { if (event.key === "Enter" && $("node-picker").value) selectNode($("node-picker").value, true, true); };
+  $("node-search").onkeydown = event => {
+    if (event.key !== "Enter") return;
+    const needle = $("node-search").value.trim().toLowerCase();
+    const exact = data.nodes.find(n => [n.id, n.shortId].some(value => String(value || "").toLowerCase() === needle));
+    const target = exact?.id || $("node-picker").value;
+    if (target) selectNode(target, true, true);
+  };
   $("node-picker").onchange = () => selectNode($("node-picker").value, true, true);
   panel.querySelectorAll('[name="graph-mode"]').forEach(input => input.onchange = () => { mode = input.value; scope(); if (mode === "original") fit(); });
   $("zoom-in").onclick = () => cy.zoom({ level: Math.min(cy.maxZoom(), cy.zoom() * 1.3), renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });

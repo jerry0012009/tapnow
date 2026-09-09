@@ -49,6 +49,11 @@ export function buildBackupIndex(nodes, connections, references, rawAssets) {
       counts[ref.roleLabel] = (counts[ref.roleLabel] || 0) + 1;
       return counts;
     }, {});
+    const assetRoles = {};
+    for (const assetId of targets) {
+      const labels = new Set(refs.filter(ref => ref.assetId === assetId).map(ref => ref.roleLabel));
+      for (const label of labels) assetRoles[label] = (assetRoles[label] || 0) + 1;
+    }
     return {
       id: node.id, shortId: node.short_id || "", title: String(node.data?.title || node.data?.name || node.type || node.id),
       type: node.type || "unknown", parentId: node.parent_id || null, position: position(node),
@@ -58,6 +63,7 @@ export function buildBackupIndex(nodes, connections, references, rawAssets) {
       text: typeof node.data?.text === "string" ? node.data.text : "",
       referenceCount: refs.length, assetCount: targets.length, verifiedCount: verified, savedCount: saved, failedCount: failed,
       roleCounts: roles,
+      assetRoleCounts: assetRoles,
       status: !targets.length ? "text" : failed ? (verified ? "partial" : "missing") : verified === targets.length ? "verified" : "pending"
     };
   });

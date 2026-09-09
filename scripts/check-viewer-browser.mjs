@@ -68,6 +68,20 @@ try {
     await page.locator("#node-search").fill("n83");
     assert.ok(await page.locator("#node-picker option").count());
     await page.locator("#node-search").press("Enter");
+    const multi = graph.nodes.find(n => (n.roleCounts?.["备选"] || 0) >= 2);
+    if (multi) {
+      await page.locator("#node-search").fill(multi.id);
+      await page.locator("#node-search").press("Enter");
+      await page.waitForFunction(id => document.querySelector("#inspector .inspector-heading code")?.textContent === id, multi.id);
+      await page.waitForFunction(id => document.querySelector("#graph")._cyreg.cy.getElementById(id).hasClass("with-media"), multi.id, { timeout: 60000 });
+      const gallery = await page.evaluate(id => {
+        const node = document.querySelector("#graph")._cyreg.cy.getElementById(id);
+        return { background: node.style("background-image"), label: node.data("mediaLabel") };
+      }, multi.id);
+      assert.match(gallery.background, /data:image\/webp/);
+      assert.match(gallery.label, /\d+ 张本地图片/);
+      assert.match(await page.locator("#asset-list").innerText(), /图片 1\//);
+    }
     await page.waitForTimeout(400);
     await page.locator('button[data-view="assets"]').click();
     await page.locator("tbody tr").first().waitFor();
