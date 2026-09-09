@@ -7,5 +7,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["entrypoints/backup/main.ts", "entrypoints/backup-bridge.content.ts", "utils/backup/**/*.ts", "utils/messages.ts"]
+  "include": [".wxt/types/paths.d.ts", "editions/backup/**/*.ts", "entrypoints/backup/main.ts", "entrypoints/backup-bridge.content.ts", "entrypoints/backup-launcher.content.ts", "entrypoints/library/main.ts", "utils/backup/**/*.ts", "utils/messages.ts"]
 }

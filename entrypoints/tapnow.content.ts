@@ -1,7 +1,6 @@
 import { browser } from "wxt/browser";
-import { createElement, Download, GripVertical, RotateCcw } from "lucide";
+import { createElement, GripVertical, RotateCcw } from "lucide";
 import { canvasIdFromUrl } from "../utils/backup/source";
-import { messageListener } from "../utils/messages";
 import {
   DEFAULT_SETTINGS,
   normalizeSettings,
@@ -79,100 +78,6 @@ export default defineContentScript({
   matches: ["https://app.tapnow.ai/*"],
   runAt: "document_idle",
   main() {
-    browser.runtime.onMessage.addListener(messageListener([
-      "tapnow:backup-ping", "tapnow:backup-fetch-json", "tapnow:backup-fetch-asset"
-    ], async (message) => {
-      if (message?.type === "tapnow:backup-ping") return { ok: true, url: location.href };
-      if (
-        message?.type !== "tapnow:backup-fetch-json" &&
-        message?.type !== "tapnow:backup-fetch-asset"
-      ) {
-        return undefined;
-      }
-      if (message?.type === "tapnow:backup-fetch-asset") {
-        try {
-          const source = new URL(String(message.url || ""));
-          if (source.protocol !== "https:") {
-            return { ok: false, error: "资产地址必须使用 HTTPS。" };
-          }
-          const start = Math.max(0, Number(message.start || 0));
-          const requestedEnd = Math.max(start, Number(message.end || start + 4_000_000 - 1));
-          const response = await fetch(source, {
-            credentials: "include",
-            headers: { Range: `bytes=${start}-${requestedEnd}` }
-          });
-          if (!response.ok && response.status !== 206) {
-            return { ok: false, error: `资产请求 HTTP ${response.status}` };
-          }
-          const body = new Uint8Array(await response.arrayBuffer());
-          const contentRange = response.headers.get("content-range") || "";
-          const rangeMatch = contentRange.match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
-          const actualStart = rangeMatch ? Number(rangeMatch[1]) : start;
-          const totalBytes =
-            rangeMatch && rangeMatch[3] !== "*"
-              ? Number(rangeMatch[3])
-              : actualStart === 0
-                ? body.length
-                : null;
-          const chunk = actualStart === start ? body : body.slice(start, requestedEnd + 1);
-          let binary = "";
-          for (let index = 0; index < chunk.length; index += 0x8000) {
-            binary += String.fromCharCode(...chunk.subarray(index, index + 0x8000));
-          }
-          const nextOffset = start + chunk.length;
-          return {
-            ok: true,
-            status: response.status,
-            contentType: response.headers.get("content-type") || "application/octet-stream",
-            etag: response.headers.get("etag"),
-            lastModified: response.headers.get("last-modified"),
-            totalBytes,
-            nextOffset,
-            complete: totalBytes !== null ? nextOffset >= totalBytes : chunk.length === 0,
-            dataBase64: btoa(binary)
-          };
-        } catch (error) {
-          return {
-            ok: false,
-            error: error instanceof Error ? error.message : String(error)
-          };
-        }
-      }
-      const endpoint = String(message.endpoint || "");
-      if (!endpoint.startsWith("/api/")) {
-        return { ok: false, error: "备份请求不是 TapNow API 路径。" };
-      }
-      try {
-        const accessToken = localStorage.getItem("access_token");
-        if (!accessToken) {
-          return { ok: false, error: "TapNow 页面没有可用的登录会话。" };
-        }
-        const response = await fetch(new URL(endpoint, location.origin), {
-          credentials: "include",
-          headers: { Authorization: `Bearer ${accessToken}` }
-        });
-        const text = await response.text();
-        let body: unknown = text;
-        try {
-          body = JSON.parse(text);
-        } catch {
-          // Preserve a short response preview for diagnostics without storing credentials.
-        }
-        return {
-          ok: response.ok,
-          status: response.status,
-          body: response.ok ? body : undefined,
-          error: response.ok ? undefined : `TapNow API HTTP ${response.status}`,
-          responsePreview: response.ok ? undefined : text.slice(0, 500)
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          error: error instanceof Error ? error.message : String(error)
-        };
-      }
-    }));
-
     let updateRoute = () => {};
     const mount = () => {
       updateRoute();
@@ -222,12 +127,11 @@ export default defineContentScript({
       shadow.innerHTML = `
         <style>
           :host { all: initial; position:fixed; inset:0; width:100%; height:100%; margin:0; padding:0; border:0; background:transparent; pointer-events:none; z-index:2147483647; }
-          .dock { position:fixed; right:20px; bottom:128px; display:flex; align-items:center; gap:5px; max-width:calc(100vw - 16px); padding:5px; border:1px solid #bdc9cf; border-radius:8px; background:#fff; box-shadow:0 3px 12px #17212b26; pointer-events:auto; z-index:2; }
+          .dock { position:fixed; right:20px; bottom:190px; display:flex; align-items:center; gap:5px; max-width:calc(100vw - 16px); padding:5px; border:1px solid #bdc9cf; border-radius:8px; background:#fff; box-shadow:0 3px 12px #17212b26; pointer-events:auto; z-index:2; }
           .dock button { border:0; border-radius:5px; min-height:34px; padding:6px 9px; font:600 13px/1.2 system-ui,sans-serif; cursor:pointer; white-space:nowrap; display:inline-flex; align-items:center; gap:5px; }
           .dock button:disabled { opacity:.5;cursor:not-allowed; }
           .dock button[hidden] { display:none; }
           .launcher { background:#263743; color:white; }
-          .backup-launcher { background:#126f5e;color:white; }
           .dock .grip,.dock .reset-position { background:transparent;color:#55646d;padding:5px; }
           .dock svg { width:16px;height:16px; }
           .dock .grip { cursor:grab;touch-action:none;user-select:none; }
@@ -257,13 +161,11 @@ export default defineContentScript({
           .footer { display: flex; gap: 8px; padding: 14px 16px; border-top: 1px solid #e2e8f0; }
           button.action { flex: 1; min-height: 38px; border: 1px solid #cbd5e1; border-radius: 7px; cursor: pointer; font: 600 13px system-ui, sans-serif; }
           button.primary { background: #0f766e; color: white; border-color: #0f766e; }
-          button.backup { background: #1d4ed8; color: white; border-color: #1d4ed8; }
           .notice { color: #64748b; font-size: 12px; margin-top: 10px; }
         </style>
         <div class="dock" role="toolbar" aria-label="TapNow 插件">
           <button class="grip" title="拖动插件入口" aria-label="拖动插件入口"></button>
           <button class="launcher" type="button" title="审阅当前聚焦节点">副驾驶</button>
-          <button class="backup-launcher" type="button"><span>备份此画布</span></button>
           <button class="reset-position" title="恢复入口位置" aria-label="恢复入口位置"></button>
         </div>
         <section class="panel hidden" aria-label="TapNow Companion 审核面板">
@@ -274,7 +176,6 @@ export default defineContentScript({
           <div class="body"></div>
           <footer class="footer">
             <button class="action close-action" type="button">关闭</button>
-            <button class="action backup" type="button">备份</button>
             <button class="action primary detect" type="button">检测</button>
           </footer>
         </section>
@@ -292,16 +193,13 @@ export default defineContentScript({
       const launcher = shadow.querySelector<HTMLButtonElement>(".launcher")!;
       const dock = shadow.querySelector<HTMLDivElement>(".dock")!;
       const grip = shadow.querySelector<HTMLButtonElement>(".grip")!;
-      const directBackup = shadow.querySelector<HTMLButtonElement>(".backup-launcher")!;
       const resetPosition = shadow.querySelector<HTMLButtonElement>(".reset-position")!;
       grip.append(createElement(GripVertical));
-      directBackup.prepend(createElement(Download));
       resetPosition.append(createElement(RotateCcw));
       const panel = shadow.querySelector<HTMLElement>(".panel")!;
       const body = shadow.querySelector<HTMLElement>(".body")!;
       const close = shadow.querySelector<HTMLButtonElement>(".close")!;
       const closeAction = shadow.querySelector<HTMLButtonElement>(".close-action")!;
-      const backupButton = shadow.querySelector<HTMLButtonElement>(".backup")!;
       const detectButton = shadow.querySelector<HTMLButtonElement>(".detect")!;
 
       function textOf(element: Element | null | undefined): string {
@@ -1813,8 +1711,8 @@ export default defineContentScript({
       }
 
       function loadLauncherPosition() {
-        void browser.storage.local.get({ backupDockPosition: null }).then((value) => {
-          const position = value.backupDockPosition as {
+        void browser.storage.local.get({ companionDockPosition: null }).then((value) => {
+          const position = value.companionDockPosition as {
             left?: number;
             top?: number;
           } | null;
@@ -1853,7 +1751,7 @@ export default defineContentScript({
         if (state.movedDuringDrag) {
           const rect = dock.getBoundingClientRect();
           void browser.storage.local.set({
-            backupDockPosition: { left: rect.left, top: rect.top }
+            companionDockPosition: { left: rect.left, top: rect.top }
           });
         }
       });
@@ -1866,13 +1764,7 @@ export default defineContentScript({
       });
       close.addEventListener("click", closePanel);
       closeAction.addEventListener("click", closePanel);
-      backupButton.addEventListener("click", () => {
-        void browser.runtime.sendMessage({ type: "tapnow:open-backup" });
-      });
-      directBackup.addEventListener("click", () => {
-        void browser.runtime.sendMessage({ type: "tapnow:open-backup" });
-      });
-      resetPosition.onclick = () => { dock.removeAttribute("style"); void browser.storage.local.remove("backupDockPosition"); };
+      resetPosition.onclick = () => { dock.removeAttribute("style"); void browser.storage.local.remove("companionDockPosition"); };
       window.addEventListener("resize", () => {
         const rect = dock.getBoundingClientRect();
         applyLauncherPosition(rect.left, rect.top);
@@ -1884,7 +1776,6 @@ export default defineContentScript({
         if (route !== lastRoute) {
           lastRoute = route;
           closePanel();
-          directBackup.querySelector("span")!.textContent = canvas ? "备份此画布" : "选择画布备份";
           launcher.disabled = !canvas;
           launcher.title = canvas ? "审阅当前聚焦节点" : "进入具体画布后可使用副驾驶";
           host.style.display = location.pathname.startsWith("/canvas") ? "" : "none";

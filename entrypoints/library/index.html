@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN" data-local-viewer>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>TapNow 本地资产库</title></head>
+<body>
+  <header>
+    <div><h1>TapNow <span>本地资产库</span></h1><p id="subtitle">尚未打开本地备份</p></div>
+    <div class="header-actions"><span id="producer"></span><button id="refresh" title="重新读取备份" aria-label="重新读取备份"><i data-lucide="refresh-cw"></i></button></div>
+  </header>
+  <section class="local-controls">
+    <div class="local-row">
+      <button id="open-directory"><i data-lucide="folder-open"></i>打开备份目录</button>
+      <button id="restore-directory" hidden><i data-lucide="folder-check"></i>授权读取上次目录</button>
+      <select id="local-canvas" aria-label="本地画布" disabled><option>尚未选择目录</option></select>
+      <button id="verify-local" disabled><i data-lucide="shield-check"></i>核对完整性</button>
+      <button id="cancel-verify" hidden><i data-lucide="square"></i>停止核对</button>
+      <button id="export-verification" disabled><i data-lucide="download"></i>导出核对报告</button>
+    </div>
+    <div id="local-path"></div>
+    <p id="local-status" role="status">未选择目录</p>
+    <progress id="verification-progress" value="0" max="1" hidden></progress>
+    <details id="local-issues" hidden><summary id="issues-summary">核对问题</summary><pre id="issues-json"></pre></details>
+  </section>
+  <main>
+    <section id="metrics" class="metrics"></section>
+    <section class="band"><div class="section-head"><span>备份清单记录的保存比例</span><span id="coverage-note"></span></div><div class="coverage"><div id="coverage-bar"></div></div></section>
+    <nav class="tabs" aria-label="详情">
+      <button class="tab active" data-view="graph">关系画布</button><button class="tab" data-view="assets">资产结果</button>
+      <button class="tab" data-view="references">引用关系</button><button class="tab" data-view="nodes">节点</button>
+      <button class="tab" data-view="connections">连线</button><button class="tab" data-view="audit">验收说明</button>
+    </nav>
+    <section id="panel"></section>
+  </main>
+  <script type="module" src="./main.ts"></script>
+</body></html>

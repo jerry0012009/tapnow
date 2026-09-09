@@ -1,0 +1,4 @@
+body{width:270px;margin:0;padding:18px;font:14px system-ui,sans-serif;color:#213b36;background:#f7faf9}
+h1{font-size:18px;margin:0 0 14px}
+button{display:flex;align-items:center;gap:10px;width:100%;min-height:42px;border:1px solid #b9cdc7;border-radius:6px;margin:9px 0;padding:10px;background:#fff;color:inherit;font:inherit;cursor:pointer}
+button:hover{background:#eaf4ef}svg{width:18px;height:18px}#status{font-size:12px;overflow-wrap:anywhere}

@@ -14,12 +14,12 @@ function nodeLabel(n) {
 }
 const icon = (name, title, id) => `<button class="icon-button" id="${id}" title="${title}" aria-label="${title}"><i data-lucide="${name}"></i></button>`;
 const icons = () => window.lucide.createIcons({ attrs: { width: 18, height: 18, "stroke-width": 1.8 } });
-async function get(url, signal) { const response = await fetch(url, { signal }); if (!response.ok) throw new Error((await response.json()).error || "读取失败"); return response.json(); }
 
 export async function mountGraph(panel, signal, initialId) {
   const lifecycle = new AbortController();
   signal?.addEventListener("abort", () => lifecycle.abort(), { once: true });
   let cy, selected, detailVersion = 0, mode = "original", detail;
+  let releaseMedia = () => {};
   const $ = id => panel.querySelector(`#${id}`);
   panel.innerHTML = `
   <div class="graph-toolbar">
@@ -139,6 +139,7 @@ export async function mountGraph(panel, signal, initialId) {
   }
   async function selectNode(id, recenter = true, preview = false) {
     if (!nodes.has(id)) return;
+    releaseMedia(); releaseMedia = () => {};
     const version = ++detailVersion;
     selected = id;
     filterNodes();
@@ -169,7 +170,7 @@ export async function mountGraph(panel, signal, initialId) {
     $("inspector").innerHTML = `
       <div class="inspector-heading"><span class="node-badge">${escape(n.short_id || n.type)} · ${escape(kinds[n.type] || n.type)}</span><span class="status ${summary.status}">${summary.status === "text" ? "节点已保存" : labels[summary.status]}</span><h2>${escape(n.data?.title || summary.title)}</h2><code>${escape(n.id)}</code></div>
       <div class="inspector-section"><div class="section-title"><h3>本地资源</h3><span>${detail.assets.length} 目标 · ${detail.referenceCount} 引用</span></div>
-      <div id="preview" class="media-preview"><i data-lucide="${n.type === "image" ? "image" : n.type === "video" ? "film" : n.type === "audio" ? "music" : "file-text"}"></i><span>${detail.assets.length ? "本地资源未加载" : `${escape(kinds[n.type] || n.type)} · 无媒体引用`}</span></div>
+      <div id="preview" class="media-preview"><i data-lucide="${n.type === "image" ? "image" : n.type === "video" ? "film" : n.type === "audio" ? "music" : "file-text"}"></i><span>${detail.assets.length ? `${detail.assets.length} 个资源目标 · 尚未预览` : `${escape(kinds[n.type] || n.type)} · 无媒体引用`}</span></div>
       <div id="asset-list">${detail.assets.map(({ asset, references }, i) => `<div class="asset-row">
         <button class="asset-load" data-asset="${i}" ${asset?.canPreview ? "" : "disabled"}>
           <i data-lucide="${asset?.canPreview ? "image" : "file-warning"}"></i>
@@ -194,9 +195,15 @@ export async function mountGraph(panel, signal, initialId) {
     const asset = detail.assets[index]?.asset;
     if (!asset?.canPreview) return;
     const id = selected, token = ++detailVersion;
-    const src = `/api/media/${encodeURIComponent(asset.assetId || asset.referenceId)}`;
+    releaseMedia(); releaseMedia = () => {};
     $("preview").replaceChildren();
     const note = document.createElement("span"); note.textContent = "正在读取本地原文件..."; $("preview").append(note);
+    let resource;
+    try { resource = await mediaSource(asset); }
+    catch (error) { if (token === detailVersion && !lifecycle.signal.aborted) note.textContent = `本地文件无法读取：${error.message}`; return; }
+    if (token !== detailVersion || lifecycle.signal.aborted) { resource.release(); return; }
+    releaseMedia = resource.release;
+    const src = resource.url;
     const isImage = /^image\/(png|jpeg|webp|gif|avif)(;|$)/.test(asset.contentType || "");
     const isVideo = /^video\/(mp4|webm)(;|$)/.test(asset.contentType || "");
     const isAudio = /^audio\//.test(asset.contentType || "");
@@ -219,7 +226,8 @@ export async function mountGraph(panel, signal, initialId) {
       media.src = src; $("preview").prepend(media);
     } else note.textContent = "此格式不内嵌预览，可下载本地原文件";
     const link = document.createElement("a");
-    link.href = `${src}?download=1`; link.textContent = "下载本地原文件"; link.className = "download-link";
+    link.href = resource.downloadUrl; link.download = asset.file?.split("/").pop() || asset.sha256 || "asset";
+    link.textContent = "下载本地原文件"; link.className = "download-link";
     $("preview").append(link);
   }
   cy.on("tap", "node", event => selectNode(event.target.id(), false, true));
@@ -239,5 +247,6 @@ export async function mountGraph(panel, signal, initialId) {
     || data.nodes.find(n => n.type !== "group") || data.nodes[0];
   if (initial) { await selectNode(initial.id); filterNodes(); fit(); }
   zoomChanged();
-  return () => { lifecycle.abort(); detailVersion++; resize.disconnect(); cy.destroy(); };
+  return () => { lifecycle.abort(); detailVersion++; releaseMedia(); resize.disconnect(); cy.destroy(); };
 }
+import { get, mediaSource } from "./data.js";

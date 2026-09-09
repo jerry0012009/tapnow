@@ -1,15 +1,11 @@
 import { mountGraph } from "./graph.js";
+import { get } from "./data.js";
 const $ = selector => document.querySelector(selector);
 const state = { report: null, view: location.hash === "#assets" ? "assets" : "graph", offset: 0, query: "" };
 const fmt = n => Number(n || 0).toLocaleString("zh-CN");
 const bytes = n => `${(Number(n || 0) / 1e9).toFixed(2)} GB`;
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 let cleanup = null, request = null;
-async function get(url, signal) {
-  const response = await fetch(url, { signal }); const data = await response.json();
-  if (!response.ok) throw new Error(data.error || response.statusText);
-  return data;
-}
 function renderReport(report) {
   state.report = report;
   const verified = report.verifiedCount || 0, total = report.uniqueAssetCount || 0;
@@ -18,7 +14,7 @@ function renderReport(report) {
     : report.producer === "test-fixture" ? "模拟测试数据" : "早期执行器产物";
   $("#metrics").innerHTML = [
     ["节点", fmt(report.nodeCount)], ["连线", fmt(report.connectionCount)], ["引用", fmt(report.referenceCount)],
-    ["唯一目标", fmt(total)], ["已验证", fmt(verified)], ["未完成", fmt(total - verified)], ["目标字节合计", bytes(report.verifiedBytes)]
+    ["唯一目标", fmt(total)], ["清单已验证", fmt(verified)], ["未完成", fmt(total - verified)], ["目标字节合计", bytes(report.verifiedBytes)]
   ].map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`).join("");
   const date = report.finishedAt || report.updatedAt;
   $("#coverage-note").textContent = `${total ? (verified / total * 100).toFixed(2) : 0}% · ${date ? new Date(date).toLocaleString("zh-CN") : "时间未记录"}`;
@@ -60,12 +56,20 @@ function renderAudit() {
     <p>节点与连线来自该画布的分页快照。没有完成整个工作区和网页各类历史来源的独立对照，不能据此宣称所有工作区零遗漏。</p>
     <details><summary>完整报告 JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
 }
-async function load() {
+export function clearViewer() {
+  request?.abort(); cleanup?.(); cleanup = null;
+  state.report = null;
+  $("#metrics").replaceChildren(); $("#panel").replaceChildren();
+  $("#coverage-note").textContent = ""; $("#coverage-bar").style.width = "0%";
+  $("#producer").textContent = ""; $("#subtitle").textContent = "尚未打开本地备份";
+}
+export async function load() {
   try { renderReport(await get("/api/report")); await renderView(); }
   catch (error) { $("#panel").innerHTML = `<p class="error">${esc(error.message)}</p>`; }
 }
 document.querySelectorAll(".tab").forEach(tab => tab.onclick = () => {
+  if (!state.report) return;
   state.view = tab.dataset.view; state.offset = 0; state.query = ""; history.replaceState(null, "", `#${state.view}`); void renderView();
 });
 $("#refresh").onclick = load;
-void load();
+if (!document.documentElement.hasAttribute("data-local-viewer")) void load();

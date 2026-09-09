@@ -29,7 +29,7 @@ app.innerHTML = `
     #status { min-height: 18px; margin-top: 8px; color: #15803d; font-size: 12px; }
   </style>
   <h1>TapNow Companion 0.1</h1>
-  <p>TapNow 资产备份与节点审阅</p>
+  <p>TapNow 节点审阅</p>
   <div class="row"><input id="enabled" type="checkbox"><label for="enabled">启用副驾驶</label></div>
   <label for="requiredTerms">团队要求词（逗号或换行分隔）</label>
   <textarea id="requiredTerms" placeholder="例如：电影感, 品牌色"></textarea>
@@ -56,7 +56,6 @@ app.innerHTML = `
     <div class="hint">0.1 支持 OpenAI/ACU HTTPS API；Key 不会同步到 Chrome 账号。</div>
   </div>
   <button id="save" type="button">保存设置</button>
-  <button id="backup" type="button" style="background:#0f766e">打开备份中心</button>
   <div id="status" role="status"></div>
 `;
 
@@ -97,8 +96,4 @@ $("save").addEventListener("click", async () => {
   await browser.storage.sync.set(next);
   if (apiKey) await browser.storage.local.set({ apiKey });
   $("status").textContent = "已保存。刷新 TapNow 页面后生效。";
-});
-
-$("backup").addEventListener("click", async () => {
-  await browser.runtime.sendMessage({ type: "tapnow:open-backup" });
 });

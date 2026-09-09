@@ -3,6 +3,7 @@ import { collectPages } from "../../utils/backup/pagination";
 import { discoverAssetReferences } from "../../utils/backup/discover";
 import { downloadToDirectory, indexReferences, reconcileAssets, localFile, writeLocal, verifySaved, type LocalDirectory, type Result } from "../../utils/backup/engine";
 import { canvasIdFromUrl, sourceMatches } from "../../utils/backup/source";
+import { directoryHandle } from "../../utils/backup/handles";
 import { createIcons, FolderOpen, RefreshCw, ScanSearch, ExternalLink, Download, Pause } from "lucide";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -20,6 +21,7 @@ progress{width:100%;height:18px}.step{padding:18px 0;border-top:1px solid #d6dfe
 @media(max-width:600px){body{padding:16px}.row #canvas{flex-basis:100%}h1{font-size:22px}#target-name{font-size:20px}.metrics{gap:16px}}
 </style>
 <h1>TapNow 资产备份中心</h1>
+<button id="open-library"><i data-lucide="folder-open"></i>查看本地备份</button>
 <section class="step"><div class="step-label">1. 备份画布</div>
 <div class="row"><select id="canvas" aria-label="选择备份画布"></select><button id="refresh-tabs" title="更新已打开的画布列表"><i data-lucide="refresh-cw"></i>更新列表</button></div>
 <h2 id="target-name">尚未选择画布</h2><div id="target-id"></div><p id="origin" class="muted"></p>
@@ -47,6 +49,18 @@ const query = new URLSearchParams(location.search);
 let controller: AbortController | null = null;
 const record = (v: unknown): Record<string, any> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, any> : {};
 const setStatus = (v: string) => $("status").textContent = v;
+$("open-library").onclick = async () => {
+  try {
+    const params = new URLSearchParams();
+    if (directory) {
+      const key = `backup-${await browser.tabs.getCurrent().then(tab => tab?.id || "current")}`;
+      await directoryHandle(key, directory);
+      params.set("directory", key);
+      if (snapshot?.canvasId || target?.canvasId) params.set("canvasId", snapshot?.canvasId || target!.canvasId);
+    }
+    await browser.tabs.create({ url: `${browser.runtime.getURL("/library.html")}?${params}` });
+  } catch (error) { setStatus(`打开本地查看器失败：${String(error)}`); }
+};
 const setBusy = (busy: boolean) => {
   running = busy;
   for (const id of ["choose", "connect", "scan", "canvas", "limit", "refresh-tabs"]) ($<HTMLButtonElement>(id)).disabled = busy;

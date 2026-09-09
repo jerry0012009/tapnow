@@ -1,6 +1,6 @@
 {
   "name": "tapnow-canvas-audit",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,8 +14,8 @@
     "backup:typecheck": "tsc -p tsconfig.backup.json",
     "record": "node scripts/record-session.mjs",
     "extension:dev": "wxt --browser chrome",
-    "extension:build": "wxt build --browser chrome --mv3",
-    "extension:zip": "wxt zip --browser chrome --mv3",
+    "extension:build": "node scripts/build-editions.mjs build",
+    "extension:zip": "node scripts/build-editions.mjs zip",
     "test": "tsx --test"
   },
   "dependencies": {

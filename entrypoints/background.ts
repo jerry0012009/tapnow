@@ -3,7 +3,6 @@ import { defineBackground } from "wxt/utils/define-background";
 import { DEFAULT_SETTINGS, normalizeSettings } from "../utils/reviewer";
 import { LlmRequestError, reviewWithLlm } from "../utils/llm";
 import { MAX_SINGLE_IMAGE_BYTES } from "../utils/limits";
-import { backupPageQuery, sourceMatches } from "../utils/backup/source";
 import { messageListener } from "../utils/messages";
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -60,112 +59,8 @@ async function compressImage(
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener(messageListener<Browser.runtime.MessageSender>([
-    "tapnow:ensure-backup-bridge", "tapnow:prepare-backup", "tapnow:open-backup",
-    "tapnow:backup-fetch-asset", "tapnow:capture-image", "tapnow:llm-review"
+    "tapnow:capture-image", "tapnow:llm-review"
   ], async (message, sender) => {
-    if (message?.type === "tapnow:ensure-backup-bridge") {
-      if (sender.id !== browser.runtime.id || sender.url?.split(/[?#]/)[0] !== browser.runtime.getURL("/backup.html")) {
-        return { ok: false, error: "Invalid caller" };
-      }
-      try {
-        const tab = await browser.tabs.get(message.tabId);
-        if (!sourceMatches(tab, message.tabId, message.canvasId)) throw new Error("来源标签页已关闭或切换，请重新选择画布。");
-        const ping = () => browser.tabs.sendMessage(tab.id!, { type: "tapnow:backup-v2-ping", expectedCanvasId: message.canvasId }, { frameId: 0 });
-        try { return await ping(); } catch {}
-        await browser.scripting.executeScript({ target: { tabId: tab.id!, frameIds: [0] }, files: ["/content-scripts/backup-bridge.js"] });
-        return await ping();
-      } catch {
-        return { ok: false, error: "无法连接该画布。请在 Chrome 扩展详情中允许访问 app.tapnow.ai，并确认原标签页仍打开。" };
-      }
-    }
-    if (message?.type === "tapnow:prepare-backup") {
-      await browser.declarativeNetRequest.updateSessionRules({
-        removeRuleIds: [9901],
-        addRules: [{
-          id: 9901, priority: 1,
-          action: { type: "modifyHeaders", requestHeaders: [
-            { header: "Referer", operation: "set", value: "https://app.tapnow.ai/" }
-          ] },
-          condition: {
-            requestDomains: ["files.tapnow.media", "files.tapnow.top"],
-            initiatorDomains: [browser.runtime.id],
-            resourceTypes: ["xmlhttprequest"]
-          }
-        }]
-      });
-      return { ok: true };
-    }
-    if (message?.type === "tapnow:open-backup") {
-      const source = sender.tab?.url?.startsWith("https://app.tapnow.ai/") ? sender.tab : (await browser.tabs.query({ active: true, currentWindow: true }))[0];
-      const query = backupPageQuery(source);
-      await browser.tabs.create({
-        url: `${browser.runtime.getURL("/backup.html")}${query ? `?${query}` : ""}`,
-        ...(source?.id ? { openerTabId: source.id, windowId: source.windowId } : {})
-      });
-      return { ok: true };
-    }
-
-    if (message?.type === "tapnow:backup-fetch-asset") {
-      try {
-        const source = new URL(String(message.url || ""));
-        if (
-          source.protocol !== "https:" ||
-          !(
-            source.hostname === "files.tapnow.media" ||
-            source.hostname.endsWith(".tapnow.media") ||
-            source.hostname.endsWith(".tapnow.top")
-          )
-        ) {
-          return { ok: false, error: "备份媒体地址不在允许的媒体域名内。" };
-        }
-        const start = Math.max(0, Number(message.start || 0));
-        const end = Math.max(start, Number(message.end || start + 4_000_000 - 1));
-        const response = await fetch(source, {
-          headers: {
-            Referer: "https://app.tapnow.ai/",
-            Range: `bytes=${start}-${end}`
-          },
-          redirect: "follow"
-        });
-        if (!response.ok && response.status !== 206) {
-          return { ok: false, error: `媒体请求失败 HTTP ${response.status}` };
-        }
-        const body = new Uint8Array(await response.arrayBuffer());
-        const contentRange = response.headers.get("content-range") || "";
-        const rangeMatch = contentRange.match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
-        const actualStart = rangeMatch ? Number(rangeMatch[1]) : start;
-        const totalBytes =
-          rangeMatch && rangeMatch[3] !== "*"
-            ? Number(rangeMatch[3])
-            : actualStart === 0
-              ? body.length
-              : null;
-        const chunk =
-          actualStart === start ? body : body.slice(start, end + 1);
-        let binary = "";
-        for (let index = 0; index < chunk.length; index += 0x8000) {
-          binary += String.fromCharCode(...chunk.subarray(index, index + 0x8000));
-        }
-        const nextOffset = start + chunk.length;
-        return {
-          ok: true,
-          status: response.status,
-          contentType: response.headers.get("content-type") || "application/octet-stream",
-          etag: response.headers.get("etag"),
-          lastModified: response.headers.get("last-modified"),
-          totalBytes,
-          nextOffset,
-          complete: totalBytes !== null ? nextOffset >= totalBytes : chunk.length === 0,
-          dataBase64: btoa(binary)
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          error: error instanceof Error ? error.message : String(error)
-        };
-      }
-    }
-
     if (message?.type === "tapnow:capture-image") {
       try {
         const source = new URL(String(message.url || ""));
