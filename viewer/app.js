@@ -49,11 +49,15 @@ async function renderView(nodeId) {
 }
 function renderAudit() {
   const r = state.report, plugin = r.producer === "chrome-extension";
+  const c = r.coverage || {};
+  const list = value => Object.entries(value || {}).map(([key, count]) => `${esc(key)} ${fmt(count)}`).join(" · ") || "无记录";
   $("#panel").innerHTML = `<h2>备份证据与范围</h2>
     <dl class="property-list"><dt>产物来源</dt><dd>${plugin ? "Chrome 插件 / File System Access" : "早期真实登录会话执行器（非插件全量写入）"}</dd><dt>任务状态</dt><dd>${esc(r.status || "历史快照")}</dd><dt>范围</dt><dd>单画布</dd><dt>目标字节合计</dt><dd>${fmt(r.verifiedBytes)} 字节</dd><dt>去重物理文件</dt><dd>${fmt(r.physicalFileCount)} 个 · ${fmt(r.physicalBytes)} 字节</dd><dt>待处理</dt><dd>${fmt(r.pendingCount)}</dd><dt>失败</dt><dd>${fmt(r.failedCount)}</dd></dl>
+    <div class="audit-grid"><div><h3>覆盖审计</h3><dl class="property-list"><dt>节点类型</dt><dd>${list(c.nodeTypeCounts)}</dd><dt>资源角色</dt><dd>${list(c.roleCounts)}</dd><dt>资源状态</dt><dd>${list(c.statusCounts)}</dd><dt>引用已关联清单</dt><dd>${fmt(c.referencesWithAsset)} / ${fmt(r.referenceCount)}</dd><dt>清单已有本地文件</dt><dd>${fmt(c.assetsWithFile)} / ${fmt(r.uniqueAssetCount)}</dd><dt>含原始 data 的节点</dt><dd>${fmt(c.nodesWithRawData)} / ${fmt(r.nodeCount)}</dd><dt>递归字段路径</dt><dd>${fmt(Object.keys(c.dataFieldCounts || {}).length)} 个；疑似隐藏/历史字段 ${fmt(c.hiddenFieldCount)}</dd></dl></div><div><h3>验收边界</h3><p>本页展示清单中发现的全部节点、连线、引用和资源目标，包括备选、历史、队列及隐藏字段；资源文件按需从本地目录读取。</p><p><strong>发现完整 ≠ 下载完整：</strong>没有文件的目标不会被图片占位冒充，失败原因保留在资产结果和节点详情中。云端不可得目标仍需后续增量补漏或人工确认。</p></div></div>
     ${r.verification ? `<p>独立磁盘复核：${r.verification.passed ? "通过" : "未通过"} · ${fmt(r.verification.verifiedUniqueFiles)} 个物理文件 · ${esc(r.verification.verifiedAt)}</p><details><summary>独立复核及基线对照</summary><pre>${esc(JSON.stringify(r.verification, null, 2))}</pre></details>` : ""}
     <p>“已验证”是备份清单记录的文件大小与 SHA-256 校验结果。预览只读取本地文件，不会访问 TapNow。引用数、唯一目标数和哈希去重后的物理文件数不是同一口径。</p>
     <p>节点与连线来自该画布的分页快照。没有完成整个工作区和网页各类历史来源的独立对照，不能据此宣称所有工作区零遗漏。</p>
+    <details><summary>递归字段路径统计</summary><pre>${esc(JSON.stringify(c.dataFieldCounts || {}, null, 2))}</pre></details>
     <details><summary>完整报告 JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
 }
 export function clearViewer() {

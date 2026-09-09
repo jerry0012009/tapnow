@@ -51,3 +51,27 @@ test("every node type is retained, including full text, custom attributes and ed
   assert.equal(index.graph.counts.connections, 7);
   for (const node of nodes) assert.deepEqual(index.nodeDetail(node.id).node, node);
 });
+test("coverage audit counts roles, statuses and nested hidden fields", () => {
+  const index = buildBackupIndex(
+    [{ id: "n", type: "image", position: { x: 0, y: 0 }, data: { prompt: "p", options: [{ hidden: true }], history: { old: "x" } } }],
+    [],
+    [
+      { nodeId: "n", referenceId: "a", assetId: "a", fieldPath: "data.src" },
+      { nodeId: "n", referenceId: "b", assetId: "b", fieldPath: "data.options[0].candidate" },
+      { nodeId: "n", referenceId: "c", assetId: "c", fieldPath: "data.history.old" }
+    ],
+    [
+      { assetId: "a", status: "verified", file: "objects/a", bytes: 1 },
+      { assetId: "b", status: "retryable", reason: "HTTP 404" }
+    ]
+  );
+  assert.deepEqual(index.coverage.nodeTypeCounts, { image: 1 });
+  assert.deepEqual(index.coverage.roleCounts, { "当前": 1, "备选": 1, "历史": 1 });
+  assert.equal(index.coverage.referencesWithAsset, 2);
+  assert.equal(index.coverage.referencesWithoutAsset, 1);
+  assert.equal(index.coverage.assetsWithFile, 1);
+  assert.equal(index.coverage.failedAssets, 1);
+  assert.deepEqual(index.graph.nodes[0].roleCounts, { "当前": 1, "备选": 1, "历史": 1 });
+  assert.ok(index.coverage.hiddenFieldCount >= 2);
+  assert.ok(index.coverage.dataFieldCounts["data.options"]);
+});

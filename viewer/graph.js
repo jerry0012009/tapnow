@@ -162,6 +162,7 @@ export async function mountGraph(panel, signal, initialId) {
   }
   function renderDetail() {
     const n = detail.node, summary = nodes.get(n.id);
+    const roleSummary = Object.entries(summary.roleCounts || {}).map(([role, count]) => `${escape(role)} ${format(count)}`).join(" · ") || "无资源角色引用";
     const links = (items, direction) => items.map(c => {
       const target = direction === "in" ? c.source : c.target, other = nodes.get(target);
       return `<button class="relation-link" data-jump="${escape(target)}">${direction === "in" ? "←" : "→"} ${escape(other?.shortId || target)} · ${escape(other?.title || "端点缺失")}</button>`;
@@ -169,7 +170,7 @@ export async function mountGraph(panel, signal, initialId) {
     const fieldTable = obj => Object.entries(obj || {}).map(([key, value]) => `<dt>${escape(key)}</dt><dd>${escape(typeof value === "object" ? JSON.stringify(value) : value)}</dd>`).join("");
     $("inspector").innerHTML = `
       <div class="inspector-heading"><span class="node-badge">${escape(n.short_id || n.type)} · ${escape(kinds[n.type] || n.type)}</span><span class="status ${summary.status}">${summary.status === "text" ? "节点已保存" : labels[summary.status]}</span><h2>${escape(n.data?.title || summary.title)}</h2><code>${escape(n.id)}</code></div>
-      <div class="inspector-section"><div class="section-title"><h3>本地资源</h3><span>${detail.assets.length} 目标 · ${detail.referenceCount} 引用</span></div>
+      <div class="inspector-section"><div class="section-title"><h3>本地资源</h3><span>${detail.assets.length} 目标 · ${detail.referenceCount} 引用</span></div><p class="asset-role-summary">${roleSummary}</p>
       <div id="preview" class="media-preview"><i data-lucide="${n.type === "image" ? "image" : n.type === "video" ? "film" : n.type === "audio" ? "music" : "file-text"}"></i><span>${detail.assets.length ? `${detail.assets.length} 个资源目标 · 尚未预览` : `${escape(kinds[n.type] || n.type)} · 无媒体引用`}</span></div>
       <div id="asset-list">${detail.assets.map(({ asset, references }, i) => `<div class="asset-row">
         <button class="asset-load" data-asset="${i}" ${asset?.canPreview ? "" : "disabled"}>

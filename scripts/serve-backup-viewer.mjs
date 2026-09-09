@@ -123,6 +123,7 @@ const server = http.createServer(async (req, res) => {
         const candidate = JSON.parse(await fs.readFile(path.join(backupRoot, "verification.json"), "utf8"));
         if (candidate.runId === report.runId && candidate.verifiedTargets === saved.length && ["completed", "partial"].includes(report.status)) verification = candidate;
       } catch {}
+      const coverage = (await backupIndex()).coverage;
       return json(res, {
         ...report,
         statuses,
@@ -133,6 +134,7 @@ const server = http.createServer(async (req, res) => {
         verification,
         failedCount: Object.entries(statuses).filter(([status]) => !["verified", "queued", "discovered"].includes(status)).reduce((sum, [, count]) => sum + count, 0),
         pendingCount: (statuses.queued || 0) + (statuses.discovered || 0),
+        coverage,
       });
     }
     if (url.pathname === "/api/canvas") return json(res, await readJson("canvas"));

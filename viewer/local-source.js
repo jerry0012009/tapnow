@@ -87,6 +87,7 @@ export async function loadLocalBackup(root) {
     physicalFileCount: new Set(saved.map(a => a.file)).size,
     physicalBytes: [...new Map(saved.map(a => [a.file, Number(a.bytes || 0)])).values()].reduce((a, b) => a + b, 0)
   };
+  summary.coverage = index.coverage;
   const data = { nodes, connections, references, assets };
   return {
     root, report: summary, data, issues,

@@ -40,11 +40,15 @@ export function buildBackupIndex(nodes, connections, references, rawAssets) {
     const list = refsByNode.get(ref.nodeId) || []; list.push(item); refsByNode.set(ref.nodeId, list);
   }
   const summaries = nodes.map(node => {
-    const refs = refsByNode.get(node.id) || [];
+      const refs = refsByNode.get(node.id) || [];
     const targets = [...new Set(refs.map(r => r.assetId).filter(Boolean))];
     const verified = targets.filter(id => byAsset.get(id)?.status === "verified").length;
     const saved = targets.filter(id => byAsset.get(id)?.canPreview).length;
-    const failed = targets.filter(id => byAsset.has(id) && !["queued", "verified"].includes(byAsset.get(id).status)).length;
+      const failed = targets.filter(id => byAsset.has(id) && !["queued", "verified"].includes(byAsset.get(id).status)).length;
+    const roles = refs.reduce((counts, ref) => {
+      counts[ref.roleLabel] = (counts[ref.roleLabel] || 0) + 1;
+      return counts;
+    }, {});
     return {
       id: node.id, shortId: node.short_id || "", title: String(node.data?.title || node.data?.name || node.type || node.id),
       type: node.type || "unknown", parentId: node.parent_id || null, position: position(node),
@@ -53,18 +57,65 @@ export function buildBackupIndex(nodes, connections, references, rawAssets) {
       prompt: String(node.data?.prompt || ""),
       text: typeof node.data?.text === "string" ? node.data.text : "",
       referenceCount: refs.length, assetCount: targets.length, verifiedCount: verified, savedCount: saved, failedCount: failed,
+      roleCounts: roles,
       status: !targets.length ? "text" : failed ? (verified ? "partial" : "missing") : verified === targets.length ? "verified" : "pending"
     };
   });
   const dangling = connections.filter(c => !byId.has(c.source) || !byId.has(c.target));
+  const nodeTypeCounts = nodes.reduce((counts, node) => {
+    const type = node.type || "unknown";
+    counts[type] = (counts[type] || 0) + 1;
+    return counts;
+  }, {});
+  const roleCounts = references.reduce((counts, ref) => {
+    const role = referenceRole(ref.fieldPath);
+    counts[role] = (counts[role] || 0) + 1;
+    return counts;
+  }, {});
+  const statusCounts = assets.reduce((counts, asset) => {
+    const status = asset.status || "unknown";
+    counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, {});
+  const dataFieldCounts = {};
+  let hiddenFieldCount = 0;
+  let nodesWithRawData = 0;
+  const visit = (value, path, seen = new Set()) => {
+    if (!value || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) return value.forEach((item, index) => visit(item, `${path}[${index}]`, seen));
+    for (const [key, child] of Object.entries(value)) {
+      const fieldPath = `${path}.${key}`;
+      dataFieldCounts[fieldPath] = (dataFieldCounts[fieldPath] || 0) + 1;
+      if (/hidden|history|variant|option|candidate|queue|alternative/i.test(key)) hiddenFieldCount++;
+      visit(child, fieldPath, seen);
+    }
+  };
+  for (const node of nodes) {
+    if (node.data && typeof node.data === "object") {
+      nodesWithRawData++;
+      visit(node.data, "data");
+    }
+  }
+  const coverage = {
+    nodeTypeCounts, roleCounts, statusCounts, dataFieldCounts,
+    hiddenFieldCount, nodesWithRawData,
+    referencesWithAsset: references.filter(ref => byAsset.has(ref.assetId)).length,
+    referencesWithoutAsset: unresolved,
+    assetsWithFile: assets.filter(asset => asset.file).length,
+    assetsWithoutFile: assets.filter(asset => !asset.file).length,
+    verifiedAssets: assets.filter(asset => asset.status === "verified").length,
+    failedAssets: assets.filter(asset => !["verified", "queued", "discovered"].includes(asset.status)).length
+  };
   return {
     graph: {
       nodes: summaries, connections,
       counts: { nodes: nodes.length, connections: connections.length, references: references.length, assets: assets.length,
         nodesWithReferences: refsByNode.size, danglingConnections: dangling.length, unresolvedReferences: unresolved,
-        nodeTypes: nodes.reduce((counts, node) => { const type = node.type || "unknown"; counts[type] = (counts[type] || 0) + 1; return counts; }, {}) },
+        nodeTypes: nodeTypeCounts },
       diagnostics
     },
+    coverage,
     byAsset,
     nodeDetail(id) {
       const node = byId.get(id);

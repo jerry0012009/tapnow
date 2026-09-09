@@ -56,6 +56,8 @@ test("viewer serves only recorded local media and supports byte ranges", async (
     const report = await (await fetch(`${base}/api/report`)).json();
     assert.equal(report.verifiedBytes, 16);
     assert.equal(report.statuses["unavailable-after-recovery"], 1);
+    assert.deepEqual(report.coverage.statusCounts, { verified: 2, "unavailable-after-recovery": 1, queued: 1 });
+    assert.equal(report.coverage.assetsWithFile, 3);
     await fs.writeFile(path.join(backup, "assets.ndjson"), "{bad JSON\n");
     assert.equal((await fetch(`${base}/api/assets`)).status, 500, "corrupt rows must not be silently skipped");
   } finally {
