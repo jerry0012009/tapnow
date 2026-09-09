@@ -18,7 +18,7 @@ export default defineConfig({
   },
   manifest: {
     name: backup ? "TapNow Backup - 资产备份与本地画布" : "TapNow Companion - 副驾驶",
-    version: "0.1.15",
+    version: "0.1.16",
     description: backup ? "Back up TapNow canvases, browse local assets and verify file integrity." : "Review focused TapNow nodes, prompts and references.",
     permissions: backup ? ["storage", "tabs", "scripting", "declarativeNetRequestWithHostAccess"] : ["storage"],
     host_permissions: [
