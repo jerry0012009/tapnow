@@ -1,4 +1,7 @@
 import { browser } from "wxt/browser";
+import { createElement, Download, GripVertical, RotateCcw } from "lucide";
+import { canvasIdFromUrl } from "../utils/backup/source";
+import { messageListener } from "../utils/messages";
 import {
   DEFAULT_SETTINGS,
   normalizeSettings,
@@ -76,7 +79,9 @@ export default defineContentScript({
   matches: ["https://app.tapnow.ai/*"],
   runAt: "document_idle",
   main() {
-    browser.runtime.onMessage.addListener(async (message) => {
+    browser.runtime.onMessage.addListener(messageListener([
+      "tapnow:backup-ping", "tapnow:backup-fetch-json", "tapnow:backup-fetch-asset"
+    ], async (message) => {
       if (message?.type === "tapnow:backup-ping") return { ok: true, url: location.href };
       if (
         message?.type !== "tapnow:backup-fetch-json" &&
@@ -166,25 +171,16 @@ export default defineContentScript({
           error: error instanceof Error ? error.message : String(error)
         };
       }
-    });
+    }));
 
+    let updateRoute = () => {};
     const mount = () => {
+      updateRoute();
       if (
         (!location.pathname.startsWith("/canvas/") &&
           !location.pathname.startsWith("/canvas/projects")) ||
         document.getElementById("tapnow-companion-host")
       ) {
-        return;
-      }
-      if (location.pathname.startsWith("/canvas/projects")) {
-        const host = document.createElement("div");
-        host.id = "tapnow-companion-host";
-        const shadow = host.attachShadow({ mode: "open" });
-        shadow.innerHTML = `<style>:host{all:initial}.backup{position:fixed;right:20px;bottom:20px;z-index:2147483647;border:0;border-radius:999px;background:#1d4ed8;color:#fff;padding:11px 16px;font:600 13px system-ui;cursor:pointer;box-shadow:0 8px 24px #0f172a38}</style><button class="backup">打开资产备份</button>`;
-        document.documentElement.append(host);
-        shadow.querySelector("button")!.addEventListener("click", () => {
-          void browser.runtime.sendMessage({ type: "tapnow:open-backup" });
-        });
         return;
       }
 
@@ -225,9 +221,18 @@ export default defineContentScript({
       const shadow = host.attachShadow({ mode: "open" });
       shadow.innerHTML = `
         <style>
-          :host { all: initial; }
-          .launcher { position: fixed; right: 20px; bottom: 20px; z-index: 2147483647; border: 1px solid #cbd5e1; border-radius: 999px; background: #0f172a; color: white; box-shadow: 0 8px 24px rgba(15, 23, 42, .22); padding: 10px 14px; font: 600 13px/1.2 system-ui, sans-serif; cursor: grab; user-select: none; touch-action: none; }
-          .launcher.dragging { cursor: grabbing; }
+          :host { all: initial; position:fixed; inset:0; width:100%; height:100%; margin:0; padding:0; border:0; background:transparent; pointer-events:none; z-index:2147483647; }
+          .dock { position:fixed; right:20px; bottom:128px; display:flex; align-items:center; gap:5px; max-width:calc(100vw - 16px); padding:5px; border:1px solid #bdc9cf; border-radius:8px; background:#fff; box-shadow:0 3px 12px #17212b26; pointer-events:auto; z-index:2; }
+          .dock button { border:0; border-radius:5px; min-height:34px; padding:6px 9px; font:600 13px/1.2 system-ui,sans-serif; cursor:pointer; white-space:nowrap; display:inline-flex; align-items:center; gap:5px; }
+          .dock button:disabled { opacity:.5;cursor:not-allowed; }
+          .dock button[hidden] { display:none; }
+          .launcher { background:#263743; color:white; }
+          .backup-launcher { background:#126f5e;color:white; }
+          .dock .grip,.dock .reset-position { background:transparent;color:#55646d;padding:5px; }
+          .dock svg { width:16px;height:16px; }
+          .dock .grip { cursor:grab;touch-action:none;user-select:none; }
+          .dock .grip.dragging { cursor:grabbing; }
+          .panel { pointer-events:auto; }
           .panel { position: fixed; top: 16px; right: 16px; bottom: 16px; width: min(400px, calc(100vw - 32px)); z-index: 2147483646; display: flex; flex-direction: column; background: #f8fafc; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 18px 50px rgba(15, 23, 42, .28); font: 14px/1.45 system-ui, -apple-system, sans-serif; }
           .hidden { display: none; }
           .header { display: flex; align-items: center; justify-content: space-between; padding: 16px; border-bottom: 1px solid #e2e8f0; }
@@ -255,7 +260,12 @@ export default defineContentScript({
           button.backup { background: #1d4ed8; color: white; border-color: #1d4ed8; }
           .notice { color: #64748b; font-size: 12px; margin-top: 10px; }
         </style>
-        <button class="launcher" type="button" title="检测当前聚焦节点">副驾驶</button>
+        <div class="dock" role="toolbar" aria-label="TapNow 插件">
+          <button class="grip" title="拖动插件入口" aria-label="拖动插件入口"></button>
+          <button class="launcher" type="button" title="审阅当前聚焦节点">副驾驶</button>
+          <button class="backup-launcher" type="button"><span>备份此画布</span></button>
+          <button class="reset-position" title="恢复入口位置" aria-label="恢复入口位置"></button>
+        </div>
         <section class="panel hidden" aria-label="TapNow Companion 审核面板">
           <header class="header">
             <strong>当前节点检测</strong>
@@ -271,7 +281,22 @@ export default defineContentScript({
       `;
 
       document.documentElement.append(host);
+      // A manual popover keeps the entry out of TapNow's stacking contexts.
+      host.popover = "manual";
+      host.showPopover();
+      document.addEventListener("fullscreenchange", () => {
+        host.hidePopover();
+        (document.fullscreenElement || document.documentElement).append(host);
+        host.showPopover();
+      });
       const launcher = shadow.querySelector<HTMLButtonElement>(".launcher")!;
+      const dock = shadow.querySelector<HTMLDivElement>(".dock")!;
+      const grip = shadow.querySelector<HTMLButtonElement>(".grip")!;
+      const directBackup = shadow.querySelector<HTMLButtonElement>(".backup-launcher")!;
+      const resetPosition = shadow.querySelector<HTMLButtonElement>(".reset-position")!;
+      grip.append(createElement(GripVertical));
+      directBackup.prepend(createElement(Download));
+      resetPosition.append(createElement(RotateCcw));
       const panel = shadow.querySelector<HTMLElement>(".panel")!;
       const body = shadow.querySelector<HTMLElement>(".body")!;
       const close = shadow.querySelector<HTMLButtonElement>(".close")!;
@@ -1613,19 +1638,19 @@ export default defineContentScript({
       }
 
       function applyLauncherPosition(left: number, top: number) {
-        const rect = launcher.getBoundingClientRect();
-        launcher.style.left = `${clamp(
+        const rect = dock.getBoundingClientRect();
+        dock.style.left = `${clamp(
           left,
           8,
           window.innerWidth - rect.width - 8
         )}px`;
-        launcher.style.top = `${clamp(
+        dock.style.top = `${clamp(
           top,
           8,
           window.innerHeight - rect.height - 8
         )}px`;
-        launcher.style.right = "auto";
-        launcher.style.bottom = "auto";
+        dock.style.right = "auto";
+        dock.style.bottom = "auto";
       }
 
       async function openPanel() {
@@ -1788,8 +1813,8 @@ export default defineContentScript({
       }
 
       function loadLauncherPosition() {
-        void browser.storage.local.get({ launcherPosition: null }).then((value) => {
-          const position = value.launcherPosition as {
+        void browser.storage.local.get({ backupDockPosition: null }).then((value) => {
+          const position = value.backupDockPosition as {
             left?: number;
             top?: number;
           } | null;
@@ -1799,18 +1824,18 @@ export default defineContentScript({
         });
       }
 
-      launcher.addEventListener("pointerdown", (event) => {
+      grip.addEventListener("pointerdown", (event) => {
         state.dragging = true;
         state.movedDuringDrag = false;
         state.dragStartX = event.clientX;
         state.dragStartY = event.clientY;
-        const rect = launcher.getBoundingClientRect();
+        const rect = dock.getBoundingClientRect();
         state.dragOriginLeft = rect.left;
         state.dragOriginTop = rect.top;
-        launcher.classList.add("dragging");
-        launcher.setPointerCapture(event.pointerId);
+        grip.classList.add("dragging");
+        grip.setPointerCapture(event.pointerId);
       });
-      launcher.addEventListener("pointermove", (event) => {
+      grip.addEventListener("pointermove", (event) => {
         if (!state.dragging) return;
         const deltaX = event.clientX - state.dragStartX;
         const deltaY = event.clientY - state.dragStartY;
@@ -1820,16 +1845,15 @@ export default defineContentScript({
           state.dragOriginTop + deltaY
         );
       });
-      launcher.addEventListener("pointerup", (event) => {
+      grip.addEventListener("pointerup", (event) => {
         if (!state.dragging) return;
         state.dragging = false;
-        launcher.classList.remove("dragging");
-        launcher.releasePointerCapture(event.pointerId);
+        grip.classList.remove("dragging");
+        grip.releasePointerCapture(event.pointerId);
         if (state.movedDuringDrag) {
-          state.suppressNextClick = true;
-          const rect = launcher.getBoundingClientRect();
+          const rect = dock.getBoundingClientRect();
           void browser.storage.local.set({
-            launcherPosition: { left: rect.left, top: rect.top }
+            backupDockPosition: { left: rect.left, top: rect.top }
           });
         }
       });
@@ -1845,6 +1869,28 @@ export default defineContentScript({
       backupButton.addEventListener("click", () => {
         void browser.runtime.sendMessage({ type: "tapnow:open-backup" });
       });
+      directBackup.addEventListener("click", () => {
+        void browser.runtime.sendMessage({ type: "tapnow:open-backup" });
+      });
+      resetPosition.onclick = () => { dock.removeAttribute("style"); void browser.storage.local.remove("backupDockPosition"); };
+      window.addEventListener("resize", () => {
+        const rect = dock.getBoundingClientRect();
+        applyLauncherPosition(rect.left, rect.top);
+      });
+      let lastRoute = "";
+      updateRoute = () => {
+        const canvas = canvasIdFromUrl(location.href);
+        const route = canvas || location.pathname;
+        if (route !== lastRoute) {
+          lastRoute = route;
+          closePanel();
+          directBackup.querySelector("span")!.textContent = canvas ? "备份此画布" : "选择画布备份";
+          launcher.disabled = !canvas;
+          launcher.title = canvas ? "审阅当前聚焦节点" : "进入具体画布后可使用副驾驶";
+          host.style.display = location.pathname.startsWith("/canvas") ? "" : "none";
+        }
+      };
+      updateRoute();
       detectButton.addEventListener("click", () => void detect());
 
       document.addEventListener("focusin", (event) => {
@@ -1856,7 +1902,7 @@ export default defineContentScript({
 
       void browser.storage.sync.get(DEFAULT_SETTINGS).then((settings) => {
         state.settings = normalizeSettings(settings);
-        host.style.display = state.settings.enabled ? "" : "none";
+        launcher.hidden = !state.settings.enabled;
       });
       loadLauncherPosition();
     };

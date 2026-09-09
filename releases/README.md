@@ -1,16 +1,16 @@
-# TapNow Companion 0.1.12
+# TapNow Companion 0.1.14
 
-最新修复版：[v0.1.13 Windows 试用版](https://github.com/jerry0012009/tapnow/releases/tag/v0.1.13)。
+最新修复版：[v0.1.14 Windows 试用版](https://github.com/jerry0012009/tapnow/releases/tag/v0.1.14)。
 
-[GitHub Release 与下载](https://github.com/jerry0012009/tapnow/releases/tag/v0.1.12)。
-本版标为 Windows 试用预发布版，安装步骤及已知限制见 [版本说明](v0.1.12.md)。
+[GitHub Release 与下载](https://github.com/jerry0012009/tapnow/releases/tag/v0.1.14)。
+本版标为 Windows 试用预发布版，安装步骤及已知限制见 [版本说明](v0.1.14.md)。
 
-`tapnow-companion-0.1.12-chrome.zip` 是已经构建好的 Chrome 扩展包，普通
+`tapnow-companion-0.1.14-chrome.zip` 是已经构建好的 Chrome 扩展包，普通
 试用用户不需要安装 Node.js、npm 或运行任何构建命令。
 
 ## 个人安装
 
-1. 下载 `tapnow-companion-0.1.12-chrome.zip`。
+1. 下载 `tapnow-companion-0.1.14-chrome.zip`。
 2. 解压到一个不会被删除的目录。
 3. 打开 Chrome `chrome://extensions`。
 4. 开启右上角“开发者模式”。

@@ -1,1 +1,2 @@
 15515991b8d71c475a9b30bedc3015bb42e936a1e962a16ce6ae4eeb74c9fd0b  tapnow-companion-0.1.13-chrome.zip
+32a93841a880d9f198c28d2cacce00ebd047de088caabd29c2a55da17d5b17cf  tapnow-companion-0.1.14-chrome.zip
