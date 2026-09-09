@@ -1,5 +1,7 @@
 # TapNow Companion 0.1.12
 
+最新修复版：[v0.1.13 Windows 试用版](https://github.com/jerry0012009/tapnow/releases/tag/v0.1.13)。
+
 [GitHub Release 与下载](https://github.com/jerry0012009/tapnow/releases/tag/v0.1.12)。
 本版标为 Windows 试用预发布版，安装步骤及已知限制见 [版本说明](v0.1.12.md)。
 

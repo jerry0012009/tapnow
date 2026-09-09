@@ -15,7 +15,7 @@ progress{width:100%;height:18px}
 </style>
 <h1>TapNow 资产备份中心</h1>
 <div class="row"><button id="choose" class="primary">选择备份目录</button><span id="directory">未选择</span></div>
-<div class="row"><select id="canvas" aria-label="选择画布"></select><button id="scan">扫描画布</button></div>
+<div class="row"><select id="canvas" aria-label="选择画布"></select><button id="connect">连接 / 刷新页面</button><button id="scan">扫描画布</button></div>
 <div class="row"><label>本轮新增上限 <input id="limit" type="number" value="20" min="0.1" step="0.1"> GiB</label><span class="muted">用户设定上限，非磁盘剩余空间</span></div>
 <div class="row"><button id="backup" class="primary" disabled>开始 / 增量补齐</button><button id="pause" disabled>暂停</button></div>
 <div class="metrics"><span>节点 / 连线<b id="graph">-</b></span><span>引用 / 唯一目标<b id="assets">-</b></span><span>已验证 / 待处理 / 失败<b id="counts">-</b></span><span>已写入<b id="bytes">0 GB</b></span></div>
@@ -30,21 +30,46 @@ const record = (v: unknown): Record<string, any> => v && typeof v === "object" &
 const setStatus = (v: string) => $("status").textContent = v;
 const setBusy = (busy: boolean) => {
   running = busy;
-  for (const id of ["choose", "scan", "canvas", "limit"]) ($<HTMLButtonElement>(id)).disabled = busy;
+  for (const id of ["choose", "connect", "scan", "canvas", "limit"]) ($<HTMLButtonElement>(id)).disabled = busy;
   $<HTMLButtonElement>("backup").disabled = busy || !directory || !snapshot;
   $<HTMLButtonElement>("pause").disabled = !busy;
 };
 async function tabs() {
   return (await browser.tabs.query({})).filter(tab => tab.id && /^https:\/\/app\.tapnow\.ai\/canvas\//.test(tab.url || ""));
 }
+async function connectedTabs() {
+  const result = [];
+  for (const tab of await tabs()) {
+    try {
+      if ((await browser.tabs.sendMessage(tab.id!, { type: "tapnow:backup-ping" }))?.ok) result.push(tab);
+    } catch {}
+  }
+  return result;
+}
 async function api(tabId: number, endpoint: string) {
-  const result = await browser.tabs.sendMessage(tabId, { type: "tapnow:backup-fetch-json", endpoint });
+  let result;
+  try {
+    result = await browser.tabs.sendMessage(tabId, { type: "tapnow:backup-fetch-json", endpoint });
+  } catch {
+    throw new Error("未连接到 TapNow 页面。请点击“连接 / 刷新页面”，等待页面完成加载后再扫描。");
+  }
   if (!result?.ok) throw new Error(result?.error || `请求失败：${endpoint}`);
   return result.body;
 }
 async function refreshCanvasList() {
   const select = $<HTMLSelectElement>("canvas"); select.replaceChildren();
-  for (const tab of await tabs()) { const option = document.createElement("option"); option.value = String(tab.id); option.textContent = tab.title || tab.url || ""; select.append(option); }
+  for (const tab of await connectedTabs()) { const option = document.createElement("option"); option.value = String(tab.id); option.textContent = tab.title || tab.url || ""; select.append(option); }
+  if (!select.options.length) setStatus("未找到已连接的 TapNow 画布。请点击“连接 / 刷新页面”。");
+}
+async function connect() {
+  const tab = (await tabs())[0];
+  if (!tab?.id) throw new Error("请先打开一个已登录的 TapNow 画布页面。");
+  setStatus("正在刷新 TapNow 页面并建立扩展连接...");
+  await browser.tabs.reload(tab.id);
+  await new Promise(resolve => setTimeout(resolve, 1800));
+  await refreshCanvasList();
+  if (!$<HTMLSelectElement>("canvas").options.length) throw new Error("页面已刷新，但仍未连接。请确认账号已登录且当前是画布页面。");
+  setStatus("已连接到 TapNow 画布，现在可以扫描。");
 }
 async function scan() {
   snapshot = null;
@@ -146,6 +171,7 @@ async function backup() {
   finished = true; await persist();
 }
 $("choose").onclick = async () => { try { directory = await (window as any).showDirectoryPicker({ mode: "readwrite", id: "tapnow-backup" }); $("directory").textContent = directory.name; $<HTMLButtonElement>("backup").disabled = !snapshot; setStatus(`已选择目录：${directory.name}`); } catch (e) { setStatus(String(e)); } };
+$("connect").onclick = async () => { setBusy(true); try { await connect(); } catch (e) { setStatus(String(e)); } finally { setBusy(false); } };
 $("scan").onclick = async () => { setBusy(true); try { await scan(); } catch (e) { setStatus(String(e)); } finally { setBusy(false); } };
 $("backup").onclick = async () => {
   if (running) return;

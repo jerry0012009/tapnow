@@ -77,6 +77,7 @@ export default defineContentScript({
   runAt: "document_idle",
   main() {
     browser.runtime.onMessage.addListener(async (message) => {
+      if (message?.type === "tapnow:backup-ping") return { ok: true, url: location.href };
       if (
         message?.type !== "tapnow:backup-fetch-json" &&
         message?.type !== "tapnow:backup-fetch-asset"
@@ -169,9 +170,21 @@ export default defineContentScript({
 
     const mount = () => {
       if (
-        !location.pathname.startsWith("/canvas/") ||
+        (!location.pathname.startsWith("/canvas/") &&
+          !location.pathname.startsWith("/canvas/projects")) ||
         document.getElementById("tapnow-companion-host")
       ) {
+        return;
+      }
+      if (location.pathname.startsWith("/canvas/projects")) {
+        const host = document.createElement("div");
+        host.id = "tapnow-companion-host";
+        const shadow = host.attachShadow({ mode: "open" });
+        shadow.innerHTML = `<style>:host{all:initial}.backup{position:fixed;right:20px;bottom:20px;z-index:2147483647;border:0;border-radius:999px;background:#1d4ed8;color:#fff;padding:11px 16px;font:600 13px system-ui;cursor:pointer;box-shadow:0 8px 24px #0f172a38}</style><button class="backup">打开资产备份</button>`;
+        document.documentElement.append(host);
+        shadow.querySelector("button")!.addEventListener("click", () => {
+          void browser.runtime.sendMessage({ type: "tapnow:open-backup" });
+        });
         return;
       }
 
