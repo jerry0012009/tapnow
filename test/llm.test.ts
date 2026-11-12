@@ -30,6 +30,13 @@ test("builds bounded JSON input for an LLM review", () => {
   );
 });
 
+test("passes grounded creative memory alongside current draft without replacing prompt", () => {
+  const memory = {status:"ready", supplement:"保留产品身份",references:[{id:"p1",name:"产品保真",quote:"产品身份与光影融合分别检查"}]};
+  const parsed = JSON.parse(llmInternals.compactDraft({prompt:"我的当前要求",creativeMemory:memory}));
+  assert.equal(parsed.prompt,"我的当前要求");
+  assert.deepEqual(parsed.creative_memory,memory);
+});
+
 test("extracts structured text from Responses and Chat Completions", () => {
   assert.equal(
     llmInternals.responseText({

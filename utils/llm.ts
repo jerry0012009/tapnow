@@ -230,6 +230,7 @@ function compactDraft(draft: ReviewDraft): string {
       : null;
 
   return JSON.stringify({
+    creative_memory: draft.creativeMemory ?? null,
     canvas_id: draft.canvasId ?? null,
     node_id: draft.nodeId ?? null,
     node_type: draft.nodeType ?? null,

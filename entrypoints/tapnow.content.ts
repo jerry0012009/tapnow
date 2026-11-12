@@ -1511,7 +1511,7 @@ export default defineContentScript({
         draft: ReviewDraft,
         clientRequestId: string
       ): Promise<LlmResponse> {
-        const timeoutMs = LLM_REQUEST_TIMEOUT_MS + 5_000;
+        const timeoutMs = LLM_REQUEST_TIMEOUT_MS + 53_000;
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           return await Promise.race([
@@ -1613,7 +1613,7 @@ export default defineContentScript({
         const sequence = ++state.reviewSequence;
         const canvas = companionRoute(location.href).canvasId;
         const prepareImages = state.settings.llmIncludeImages;
-        const baseDraft = state.lastDraft || (await getDraft(false));
+        const baseDraft = await getDraft(false);
         const draft = prepareImages
           ? await prepareDraftImages(baseDraft)
           : baseDraft;
@@ -1673,6 +1673,13 @@ export default defineContentScript({
         state.pendingTimer = setInterval(refreshPendingState, 1_000);
         try {
           const response = await sendLlmReview(draft, clientRequestId);
+          const current = await getDraft(false);
+          if (current.nodeId !== draft.nodeId || current.canvasId !== draft.canvasId ||
+              current.prompt !== draft.prompt || JSON.stringify(current.referenceBindings) !== JSON.stringify(draft.referenceBindings) ||
+              JSON.stringify(current.imageMaterials?.map(i => i.url)) !== JSON.stringify(draft.imageMaterials?.map(i => i.url))) {
+            if (sequence === state.reviewSequence) render(current, reviewDraft(current, state.settings), null, "输入或素材已变化，请重新审阅。", false);
+            return;
+          }
           const responseDiagnostics =
             response?.diagnostics ||
             (response?.result?.requestStats

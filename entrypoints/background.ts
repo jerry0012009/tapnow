@@ -153,7 +153,25 @@ export default defineBackground(() => {
     }
 
     try {
-      const result = await reviewWithLlm(message.draft, {
+      let draft = message.draft;
+      if (new URL(settings.llmBaseUrl).hostname === "api.acucompute.com") {
+        try {
+          const response = await fetch(`${settings.llmBaseUrl.replace(/\/$/, "")}/private-acu/creative-assist`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(48_000),
+            body: JSON.stringify({ mode: "review", prompt: String(draft.prompt || ""),
+              context: JSON.stringify({ canvasId: draft.canvasId, nodeId: draft.nodeId,
+                upstream: draft.upstreamSummary, referenceBindings: draft.referenceBindings }).slice(0, 60_000) })
+          });
+          if (!response.ok) throw new Error("Creative memory unavailable");
+          const memory = await response.json();
+          draft = { ...draft, creativeMemory: { status: memory.status, supplement: memory.supplement || "", references: memory.references || [] } };
+        } catch {
+          draft = { ...draft, creativeMemory: { status: "unavailable", supplement: "", references: [] } };
+        }
+      }
+      const result = await reviewWithLlm(draft, {
         apiKey,
         includeImages: settings.llmIncludeImages,
         prompt: settings.llmPrompt,
@@ -163,6 +181,7 @@ export default defineBackground(() => {
       }, {
         clientRequestId: String(message.clientRequestId || "")
       });
+      if (draft.creativeMemory?.status === "unavailable") result.suggestions.push("本次历史经验暂不可用，审阅仅依据当前素材。");
       return { ok: true, result };
     } catch (error) {
       return {

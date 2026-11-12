@@ -137,7 +137,9 @@ try {
       const nativeFetch = globalThis.fetch;
       globalThis.fetch = async (url, options) => {
         if (!String(url).startsWith("https://api.acucompute.com/")) return nativeFetch(url, options);
+        if (String(url).endsWith("/private-acu/creative-assist")) return new Response(JSON.stringify({status:"ready",supplement:"Preserve the specified product identity.",references:[{id:"fixture-memory",name:"Identity",quote:"Preserve product identity during scene integration."}]}), {headers:{"Content-Type":"application/json"}});
         globalThis.fixtureRequests.push(JSON.parse(options.body));
+        if (globalThis.fixtureReviewDelay) await new Promise(resolve => setTimeout(resolve, globalThis.fixtureReviewDelay));
         return new Response(JSON.stringify({ output_text: JSON.stringify({ decision: "allow", summary: "FIXTURE-REVIEW-OK", issues: [], suggestions: [] }) }), { headers: { "Content-Type": "application/json" } });
       };
     });
@@ -195,8 +197,23 @@ try {
     assert.equal(data.images[0].sourceNodeId, "image-offscreen");
     assert.equal(data.images[0].url, "https://files.tapnow.media/reference");
     assert.equal(data.outgoingNodes[0].id, "text-next");
+    if (process.env.TAPNOW_BUNDLE_HARNESS) {
+      await page.locator("textarea").fill("UPDATED-BEFORE-REVIEW");
+    }
     await host.locator(".detect").click();
     await page.waitForFunction(() => !document.querySelector("#tapnow-companion-host").shadowRoot.querySelector(".detect").disabled);
+    if (process.env.TAPNOW_BUNDLE_HARNESS) {
+      const sent = await page.evaluate(() => globalThis.fixtureRequests.at(-1));
+      assert(JSON.stringify(sent).includes("UPDATED-BEFORE-REVIEW"));
+      assert(JSON.stringify(sent).includes("fixture-memory"));
+      await page.evaluate(() => { globalThis.fixtureReviewDelay = 600; });
+      await host.locator(".detect").click();
+      await page.waitForTimeout(200);
+      await page.locator("textarea").fill("CHANGED-WHILE-REVIEWING");
+      await host.getByText("输入或素材已变化，请重新审阅。", { exact: true }).waitFor();
+      assert.equal(await host.getByText("FIXTURE-REVIEW-OK", { exact: true }).count(), 0);
+      await page.evaluate(() => { globalThis.fixtureReviewDelay = 0; });
+    }
     await page.screenshot({ path: path.join(output, v2 ? "v2-panel.png" : "classic-panel.png") });
     if (v2) {
       await host.locator(".close-action").click();

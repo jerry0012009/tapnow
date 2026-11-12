@@ -59,6 +59,7 @@ export interface ReviewReferenceBinding {
 }
 
 export interface ReviewDraft {
+  creativeMemory?: { status: string; supplement: string; references: Array<{ id: string; name: string; quote: string }> };
   canvasId?: string | null;
   nodeId?: string | null;
   nodeType?: string | null;
@@ -145,6 +146,8 @@ export const DEFAULT_LLM_PROMPT = [
   "当 prompt_source 为 direct-upstream-text-output 时，prompt 是直接上游 Text 节点的生成产物；不要把 prompt_candidates 中被标记为忽略的哈希、UUID 或人工输入当作本次提示词。",
   "incoming_nodes 和 incoming_connections 是当前节点的直接关系；outgoing_nodes 和 outgoing_connections 是当前节点的后续关系。",
   "只输出符合 JSON schema 的结果；不要改写原提示词，不要编造未提供的上下文。",
+  "creative_memory是有来源的历史经验，只补充本次适用的选择；当前要求优先，探索意图优先。已明说的要求不重复提醒，但实际结果违反这些要求仍需指出。历史经验不能成为block的理由。",
+  "严格区分生成前提示词建议与生成后结果观察；focused-node-output可能是旧结果，没有对应生成记录时不得称为当前新提示词的结果。只对实际提供的图片作视觉判断；参考绑定不明时不猜Image编号。可在suggestions给出简短提示词补充，不擅自应用。",
   "decision 只能是 allow、warn、block；普通质量问题用 warn，明显无法运行或违反规则用 block。"
 ].join(" ");
 
