@@ -27,22 +27,15 @@
    虚构 Key 和 fetch 响应验证后台审阅处理、结果返回及单击去重。全部页面请求由
    本地夹具处理，其他网络请求阻断，无计费请求。这不是原生扩展隔离世界或 MV3
    Service Worker 传输验收。
-2. **原生 MV3 内容脚本/Service Worker 消息链**：本轮未完成。稳定版原生目录
-   加载器未形成可重复加载步骤，尝试已停止。旧 0.1.19 原生夹具记录不能替代新包
-   新增路径的原生验收。随后获授权再次在普通用户的新空 profile 中通过标准
-   `chrome://extensions` / Load unpacked 选择最终 ZIP 解压目录；180 秒内未获得
-   扩展安装项成功信号，测试正常关闭。未使用私有 loadDirectory API、未降低安全
-   配置。该结果是当前 UI 加载执行阻碍，不证明所有官方加载路径均不可用。
-   `TAPNOW_UI_INSTALL=1` 保留标准 UI 安装等待路径；原生 isolated-world 及 Worker
-   断言已准备，但没有执行通过，不能记为原生验收成功。
-   再核对 157.0.8103.78 官方源码后，确认普通 Chrome 忽略 `--load-extension`，
-   CfT 构建不使用该品牌开关。官方 CfT 稳定版 Linux64 ZIP 已在临时目录解压，
-   以 jerry、全新 profile、明确参数尝试受支持的命令行加载最终 0.1.20 扩展。
-   浏览器在加载扩展前即报 `No usable sandbox!` 并退出 133；没有执行任何夹具。
-   Ubuntu 当前 userns 限制与只覆盖 `/opt/google/chrome/chrome` 的现有规则符合
-   [官方 AppArmor 说明](https://chromium.googlesource.com/chromium/src/+/157.0.8103.78/docs/security/apparmor-userns-restrictions.md)。
-   未修改 AppArmor/sysctl、SUID 权限或添加 no-sandbox。继续 CfT 原生测试需要
-   单独授权固定路径的安全配置方案；不能因该临时路径失败断言 CfT 不支持扩展。
+2. **原生 MV3 内容脚本/Service Worker 消息链**：2026-11-12 11:07:58 UTC
+   通过。官方 CfT 157.0.8103.78 使用受支持的 `--load-extension` 加载最终
+   0.1.20 ZIP 原样解压目录。真实 Chrome 隔离世界有扩展 runtime，页面主世界
+   没有 sendMessage；实际 Companion Worker 的 manifest 名称与版本匹配。
+   检测、host 重挂载后检测、隔离世界重新注入后检测，后台 fetch 累计数严格为
+   1、2、3，面板均收到固定审阅结果；focus 处理每次为 1，host 保持唯一。
+   没有 runtime 适配器。仅 Worker 的 fetch 被替换为拒绝其他 URL 的固定 LLM
+   JSON 响应，API Key 为虚构值；因此验证原生消息传输而非真实模型服务。
+   普通用户 jerry 的新空 profile，无旧登录数据，其他页面网络全部拦截。
 3. **真实账号/真站新旧画布端到端**：未完成，未再次请求被阻断站点。真实登录、
    图片准备、引用顺序、真实节点类型及可选 LLM 审阅仍需独立验收。
 
@@ -54,7 +47,7 @@
   基线与候选均保留 9 条既有错误、没有新增错误；不能宣称完整类型检查通过。
 - Companion/Backup 构建通过；新 ZIP 的 5 个文件与构建目录逐字节一致，压缩校验通过。
 - 候选 `releases/tapnow-companion-0.1.20-chrome.zip`，SHA-256 见
-  `releases/SHA256SUMS.txt`。未发布、未提交 Git、未做视觉美化。
+  `releases/SHA256SUMS.txt`。包与代码已提交推送；未发布 GitHub Release、未做视觉美化。
 
 ```text
 cf4895e5d6fb112b2806387f2e1699b1ef355b05b535efaefb8b69e7d375b758
@@ -67,6 +60,39 @@ CfT 来源：GoogleChromeLabs 官方稳定版索引，版本 `157.0.8103.78`，�
 加载规则依据：同版本 `chrome/browser/extensions/extension_service.cc` 与
 `build/config/chrome_build.gni`，其中 `is_chrome_for_testing` 与
 `is_chrome_branded` 明确互斥。并非通过猜测文档 URL 判断支持情况。
+
+## 授权沙箱准备与回收
+
+前次正式 Chrome UI 未完成安装；CfT 临时路径首次启动报 `No usable sandbox!`。
+随后经用户明确确认，仅为以下 root:root 固定安装路径新增精确 userns 规则：
+`/opt/google/chrome-for-testing/157.0.8103.78/chrome-linux64/chrome`。
+软件树无 group/other 写权限、无 SUID/SGID、无符号链接；新规则为
+`/etc/apparmor.d/tapnow-cft157`，profile 名 `tapnow-cft157`，内容为：
+
+```apparmor
+abi <abi/4.0>,
+include <tunables/global>
+profile tapnow-cft157 /opt/google/chrome-for-testing/157.0.8103.78/chrome-linux64/chrome flags=(unconfined) {
+  userns,
+}
+```
+
+这是按路径允许创建 user namespace，不是关闭 Chromium 沙箱；该 AppArmor profile
+自身为 unconfined，不提供文件/网络限制。实测标签 `tapnow-cft157 (unconfined)`、
+UID 1000、chrome://sandbox 报 adequately sandboxed，renderer Seccomp=2、
+NoNewPrivs=1。无 no-sandbox、unsafe SwiftShader 或 ignore-blocklist 参数。
+规则依据：[Chromium 官方 AppArmor 文档](https://chromium.googlesource.com/chromium/src/+/157.0.8103.78/docs/security/apparmor-userns-restrictions.md)。
+
+测试结束后进程正常退出；新增规则已卸载并删除，本次 CfT 固定安装目录已移除。
+全局 `apparmor_restrict_unprivileged_userns` 仍为 1；原 Chrome 规则 SHA-256
+前后均为 `9da127c4af5d1639aa4102387a29a04548299a832c5f9e803a6b0c2cfb79ef76`。
+原浏览器、下载包、测试记录均保留。非秘密验收与回收摘要见
+[原生验收记录](COMPANION_NATIVE_MV3_2026-11-12.json)。
+
+本轮没有生产代码缺陷或包变更；只修正测试从所有 Worker 中误选 Chrome 内置
+组件 Worker（版本 1.2）的问题，改按扩展名称及版本精确选择 Companion。
+原生复跑需要重新取得同等限定安全配置授权，不能直接把已删除的固定路径当成
+可运行前提，也不能因新包已通过本地原生验收就访问被阻断真站。
 
 本地复现示例（wrapper 必须以现有普通用户启动浏览器，目录由该用户创建；
 不引用现有账号 profile）：

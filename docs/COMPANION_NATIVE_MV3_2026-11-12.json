@@ -1,0 +1,33 @@
+{
+  "version": "0.1.20",
+  "browserVersion": "157.0.8103.78",
+  "executionMode": "native-extension",
+  "testedAt": "2026-11-12T11:07:58.570Z",
+  "packageSha256": "cf4895e5d6fb112b2806387f2e1699b1ef355b05b535efaefb8b69e7d375b758",
+  "nativeExtensionRuntimeValidated": true,
+  "fixtureOnly": true,
+  "externalRequestsBlocked": true,
+  "llmFetchStubbedInRealWorker": true,
+  "runtimeAdapterUsed": false,
+  "reviewCountsAfterDetectRemountReinject": [1, 2, 3],
+  "lifecycleCasesPassed": true,
+  "regressions": [],
+  "sandboxEvidence": {
+    "label": "tapnow-cft157 (unconfined)",
+    "uid": 1000,
+    "adequatelySandboxed": true,
+    "rendererSeccomp": 2,
+    "rendererNoNewPrivs": 1
+  },
+  "cleanup": {
+    "testProcessesExited": true,
+    "newRuleFileAbsent": true,
+    "newRuleUnloaded": true,
+    "installedCftAbsent": true,
+    "globalUsernsRestriction": "1",
+    "originalChromeRuleUnchanged": true,
+    "originalBrowserPresent": true,
+    "downloadArchivePreserved": true
+  },
+  "liveAccountAndSiteValidated": false
+}

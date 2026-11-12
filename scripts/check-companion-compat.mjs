@@ -29,6 +29,39 @@ const a = "00000000-0000-4000-8000-000000000001";
 const b = "00000000-0000-4000-8000-000000000002";
 const project = "00000000-0000-4000-8000-000000000003";
 const requests = [];
+let sandboxEvidence;
+if (process.env.TAPNOW_VERIFY_SANDBOX) {
+  const browserCdp = await context.browser().newBrowserCDPSession();
+  const { processInfo } = await browserCdp.send("SystemInfo.getProcessInfo");
+  const browserProcess = processInfo.find(item => item.type === "browser");
+  const label = (await fs.readFile(`/proc/${browserProcess.id}/attr/current`, "utf8")).trim();
+  assert.equal(label, "tapnow-cft157 (unconfined)");
+  const status = await fs.readFile(`/proc/${browserProcess.id}/status`, "utf8");
+  assert.equal(status.match(/^Uid:\s+(\d+)/m)?.[1], "1000");
+  const securityPage = await context.newPage();
+  try {
+    await securityPage.goto("chrome://sandbox/");
+    const cdp = await context.newCDPSession(securityPage);
+    let strings = [];
+    for (let i = 0; i < 30; i++) {
+      strings = (await cdp.send("DOMSnapshot.captureSnapshot", { computedStyles: [] })).strings;
+      if (strings.includes("You are adequately sandboxed.")) break;
+      await securityPage.waitForTimeout(100);
+    }
+    assert.ok(strings.includes("You are adequately sandboxed."));
+    const current = (await browserCdp.send("SystemInfo.getProcessInfo")).processInfo;
+    const renderers = [];
+    for (const process of current.filter(item => item.type === "renderer")) {
+      const status = await fs.readFile(`/proc/${process.id}/status`, "utf8");
+      renderers.push({ seccomp: status.match(/^Seccomp:\s+(\d+)/m)?.[1], noNewPrivs: status.match(/^NoNewPrivs:\s+(\d+)/m)?.[1] });
+    }
+    assert.ok(renderers.length && renderers.every(item => item.seccomp === "2" && item.noNewPrivs === "1"));
+    sandboxEvidence = { label, uid: 1000, adequatelySandboxed: true, rendererSeccomp: 2, rendererNoNewPrivs: 1 };
+    console.log("Sandbox evidence", JSON.stringify(sandboxEvidence));
+  } finally {
+    await securityPage.close();
+  }
+}
 const regressions = [];
 function checkLifecycle(name, check) {
   try { check(); }
@@ -243,7 +276,18 @@ try {
     const stalePanel = await panel.isVisible();
     checkLifecycle("fast A-B-A route", () => assert.equal(stalePanel, false, "fast A-B-A navigation must invalidate old draft"));
     delay = 0;
-    const worker = process.env.TAPNOW_BUNDLE_HARNESS ? page : context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
+    let worker = page;
+    if (!process.env.TAPNOW_BUNDLE_HARNESS) {
+      for (const candidate of context.serviceWorkers()) {
+        if (!/^chrome-extension:\/\/.+\/background\.js$/.test(candidate.url())) continue;
+        const candidateManifest = await candidate.evaluate(() => chrome.runtime.getManifest());
+        if (candidateManifest.name === manifest.name && candidateManifest.version === manifest.version) {
+          worker = candidate;
+          break;
+        }
+      }
+      assert.notEqual(worker, page, "the tested Companion Service Worker must be running");
+    }
     if (!process.env.TAPNOW_BUNDLE_HARNESS) {
       assert.match(worker.url(), /^chrome-extension:\/\/.+\/background\.js$/);
       assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), manifest.version);
@@ -320,6 +364,7 @@ try {
     externalRequestsBlocked: true,
     lifecycleCases: Boolean(process.env.TAPNOW_LIFECYCLE),
     regressions,
+    sandboxEvidence,
     testedAt: new Date().toISOString()
   }, null, 2));
   if (process.env.TAPNOW_EXPECT_REGRESSIONS) assert.ok(regressions.length, "old bundle must reproduce a regression");
