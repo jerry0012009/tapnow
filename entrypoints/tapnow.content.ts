@@ -1,6 +1,14 @@
 import { browser } from "wxt/browser";
 import { createElement, GripVertical, RotateCcw } from "lucide";
-import { canvasIdFromUrl } from "../utils/backup/source";
+import { companionRoute } from "../utils/tapnow-route";
+import {
+  canvasRoot,
+  canvasNodeFor,
+  canvasNodeId,
+  selectedCanvasNode,
+  CANVAS_NODE_SELECTOR,
+  PROMPT_SELECTOR
+} from "../utils/tapnow-dom";
 import {
   DEFAULT_SETTINGS,
   normalizeSettings,
@@ -77,17 +85,24 @@ type ActiveField = HTMLTextAreaElement | HTMLInputElement | HTMLElement;
 export default defineContentScript({
   matches: ["https://app.tapnow.ai/*"],
   runAt: "document_idle",
-  main() {
-    let updateRoute = () => {};
+  main(ctx) {
+    let updateRoute = (_url?: string) => {};
+    let disposeMount = () => {};
     const mount = () => {
       updateRoute();
       if (
-        (!location.pathname.startsWith("/canvas/") &&
-          !location.pathname.startsWith("/canvas/projects")) ||
+        !companionRoute(location.href).workspace ||
         document.getElementById("tapnow-companion-host")
       ) {
         return;
       }
+      disposeMount();
+      const lifecycle = new AbortController();
+      disposeMount = () => {
+        lifecycle.abort();
+        closePanel();
+        host.remove();
+      };
 
       const state: {
         settings: ReviewSettings;
@@ -102,7 +117,7 @@ export default defineContentScript({
         dragOriginTop: number;
         reviewSequence: number;
         activeNodeId: string | null;
-      lastDraft: ReviewDraft | null;
+        lastDraft: ReviewDraft | null;
         pendingTimer: ReturnType<typeof setInterval> | null;
       } = {
         settings: DEFAULT_SETTINGS,
@@ -189,7 +204,7 @@ export default defineContentScript({
         host.hidePopover();
         (document.fullscreenElement || document.documentElement).append(host);
         host.showPopover();
-      });
+      }, { signal: lifecycle.signal });
       const launcher = shadow.querySelector<HTMLButtonElement>(".launcher")!;
       const dock = shadow.querySelector<HTMLDivElement>(".dock")!;
       const grip = shadow.querySelector<HTMLButtonElement>(".grip")!;
@@ -211,20 +226,32 @@ export default defineContentScript({
 
       function nodeFor(target: Element | null): Element | null {
         if (!target || host.contains(target)) return null;
-        return (
-          target.closest("[data-node-id], [data-id], [data-node]") ||
-          target.closest("[class*='node'], [class*='Node']") ||
-          target.closest("textarea, [contenteditable=true]")?.parentElement ||
-          target
-        );
+        return canvasNodeFor(target, currentCanvasRoot());
+      }
+
+      function currentCanvasRoot(): Element | Document {
+        return canvasRoot(document, companionRoute(location.href).canvasId);
       }
 
       function rememberActive(target: Element | null) {
         if (!target || host.contains(target)) return;
+        updateRoute();
+        const root = currentCanvasRoot();
+        if (!root.contains(target)) return;
+        const node = nodeFor(target);
+        const field = target.closest("textarea, input:not([type=hidden]), [contenteditable=true]") as ActiveField | null;
+        // V2's floating prompt editor is portaled outside the node wrapper.
+        // Keep the node identity while editing it or interacting with canvas chrome.
+        if (!node) {
+          if (field?.closest(PROMPT_SELECTOR) && root.querySelector(`${CANVAS_NODE_SELECTOR}.selected`)) {
+            state.activeField = field;
+          }
+          return;
+        }
         state.activeField = target.closest(
           "textarea, input:not([type=hidden]), [contenteditable=true]"
         ) as ActiveField | null;
-        state.activeNode = nodeFor(target);
+        state.activeNode = node;
         state.activeNodeId = getNodeId(state.activeNode);
         console.info("[TapNow Companion] focus", {
           nodeId: state.activeNodeId,
@@ -253,18 +280,7 @@ export default defineContentScript({
       }
 
       function getNodeId(element: Element | null): string | null {
-        let current = element;
-        for (
-          let depth = 0;
-          current && depth < 8;
-          depth++, current = current.parentElement
-        ) {
-          for (const name of ["data-node-id", "data-id", "data-node"]) {
-            const value = current.getAttribute(name);
-            if (value && value.length < 200) return value;
-          }
-        }
-        return null;
+        return canvasNodeId(element);
       }
 
       function nodeTypeOf(element: Element | null): string | null {
@@ -328,7 +344,7 @@ export default defineContentScript({
 
       function findNodeById(nodeId: string | null): Element | null {
         if (!nodeId) return null;
-        return [...document.querySelectorAll(".react-flow__node[data-id]")].find(
+        return [...currentCanvasRoot().querySelectorAll(CANVAS_NODE_SELECTOR)].find(
           (node) => node.getAttribute("data-id") === nodeId
         ) || null;
       }
@@ -336,7 +352,7 @@ export default defineContentScript({
       function incomingNodeIds(nodeId: string | null): string[] {
         if (!nodeId) return [];
         const result: string[] = [];
-        for (const edge of document.querySelectorAll("[aria-label^='Edge from ']")) {
+        for (const edge of currentCanvasRoot().querySelectorAll("[aria-label^='Edge from ']")) {
           const label = edge.getAttribute("aria-label") || "";
           const match = label.match(/^Edge from (.+) to (.+)$/);
           if (match?.[2] === nodeId) result.push(match[1]);
@@ -347,7 +363,7 @@ export default defineContentScript({
       function outgoingNodeIds(nodeId: string | null): string[] {
         if (!nodeId) return [];
         const result: string[] = [];
-        for (const edge of document.querySelectorAll("[aria-label^='Edge from ']")) {
+        for (const edge of currentCanvasRoot().querySelectorAll("[aria-label^='Edge from ']")) {
           const label = edge.getAttribute("aria-label") || "";
           const match = label.match(/^Edge from (.+) to (.+)$/);
           if (match?.[1] === nodeId) result.push(match[2]);
@@ -361,7 +377,7 @@ export default defineContentScript({
       ): ReviewConnectionInfo[] {
         if (!nodeId) return [];
         const result: ReviewConnectionInfo[] = [];
-        for (const edge of document.querySelectorAll("[aria-label^='Edge from ']")) {
+        for (const edge of currentCanvasRoot().querySelectorAll("[aria-label^='Edge from ']")) {
           const label = edge.getAttribute("aria-label") || "";
           const match = label.match(/^Edge from (.+) to (.+)$/);
           if (!match) continue;
@@ -422,7 +438,7 @@ export default defineContentScript({
       }
 
       function promptValue(value: unknown): string {
-        const prompt = inferPromptFromNodeText(value);
+        const prompt = String(value ?? "").trim();
         return prompt === "/" || prompt === "-" ? "" : prompt;
       }
 
@@ -717,19 +733,25 @@ export default defineContentScript({
       }
 
       async function getDraft(includeImageData = false): Promise<ReviewDraft> {
+        const root = currentCanvasRoot();
+        const selectedNode = selectedCanvasNode(root, state.activeNodeId);
+        const editor = selectedNode?.querySelector<ActiveField>(`${PROMPT_SELECTOR.split(", ").map(selector => `${selector} textarea, ${selector} [contenteditable=true]`).join(", ")}`) ||
+          (root.querySelectorAll(`${CANVAS_NODE_SELECTOR}.selected`).length === 1
+            ? root.querySelector<ActiveField>("[data-node-generation-workbench]:not([inert]) textarea, [data-node-generation-workbench]:not([inert]) [contenteditable=true]")
+            : null);
         const field =
           state.activeField &&
-          document.contains(state.activeField) &&
-          (!state.activeNode || state.activeNode.contains(state.activeField))
+          root.contains(state.activeField) &&
+          (!selectedNode || selectedNode.contains(state.activeField) ||
+            (!nodeFor(state.activeField) && state.activeField.closest(PROMPT_SELECTOR)))
             ? state.activeField
-            : null;
+            : editor;
         // TapNow's selected node is the authoritative focus. The pointer event
         // can be swallowed by a scaled image child, leaving our remembered
         // node one interaction behind.
-        const selectedNode = document.querySelector(".react-flow__node.selected");
         const rememberedNode =
           selectedNode ||
-          (state.activeNode && document.contains(state.activeNode)
+          (state.activeNode && root.contains(state.activeNode)
             ? state.activeNode
             : findNodeById(state.activeNodeId));
         const nodeElement = rememberedNode || (field ? nodeFor(field) : null);
@@ -737,14 +759,12 @@ export default defineContentScript({
         const domNodeType = nodeTypeOf(nodeElement);
         const currentNodeText = nodeTextOf(nodeElement);
         const fieldIsPrompt = Boolean(
-          field?.closest(
-            "[data-testid='canvas-node-prompt-textarea'], " +
-              "[data-testid='canvas-node-generation-input-bar']"
-          )
+          field?.closest(PROMPT_SELECTOR)
         );
-        const fieldPrompt = fieldIsPrompt ? promptValue(textOf(field)) : "";
-        const canvasId =
-          location.pathname.split("/").filter(Boolean).pop() || null;
+        const fieldPrompt = fieldIsPrompt && field
+          ? promptValue("value" in field ? field.value : field.textContent)
+          : "";
+        const canvasId = companionRoute(location.href).canvasId;
         let apiSnapshot: TapNowCanvasSnapshot | null = null;
         let apiEndpoint = "";
         let apiSnapshotError = "";
@@ -926,8 +946,8 @@ export default defineContentScript({
         const domCurrentPrompt =
           nodeType === "text" ? promptValue(currentNodeText) : "";
         const promptCandidates = [
-          { source: "tapnow-api.node.data.prompt", value: apiPrompt },
           { source: "focused-node-input", value: fieldPrompt },
+          { source: "tapnow-api.node.data.prompt", value: apiPrompt },
           {
             source: "tapnow-api.node.data.text",
             value: nodeType === "text" ? apiOutputText : ""
@@ -1552,7 +1572,11 @@ export default defineContentScript({
       }
 
       async function openPanel() {
+        updateRoute();
+        const sequence = ++state.reviewSequence;
+        const canvas = companionRoute(location.href).canvasId;
         const draft = await getDraft(false);
+        if (sequence !== state.reviewSequence || canvas !== companionRoute(location.href).canvasId) return;
         state.lastDraft = draft;
         console.info("[TapNow Companion] local draft", {
           ...draft,
@@ -1561,7 +1585,6 @@ export default defineContentScript({
             dataUrl: image.dataUrl ? `[${image.dataUrl.length} chars]` : undefined
           }))
         });
-        const sequence = ++state.reviewSequence;
         panel.classList.remove("hidden");
         render(draft, reviewDraft(draft, state.settings));
         if (
@@ -1588,11 +1611,16 @@ export default defineContentScript({
       async function detect() {
         detectButton.disabled = true;
         const sequence = ++state.reviewSequence;
+        const canvas = companionRoute(location.href).canvasId;
         const prepareImages = state.settings.llmIncludeImages;
         const baseDraft = state.lastDraft || (await getDraft(false));
         const draft = prepareImages
           ? await prepareDraftImages(baseDraft)
           : baseDraft;
+        if (sequence !== state.reviewSequence || canvas !== companionRoute(location.href).canvasId) {
+          detectButton.disabled = false;
+          return;
+        }
         state.lastDraft = draft;
         const local = reviewDraft(draft, state.settings);
         console.info("[TapNow Companion] detect request", {
@@ -1768,17 +1796,22 @@ export default defineContentScript({
       window.addEventListener("resize", () => {
         const rect = dock.getBoundingClientRect();
         applyLauncherPosition(rect.left, rect.top);
-      });
+      }, { signal: lifecycle.signal });
       let lastRoute = "";
-      updateRoute = () => {
-        const canvas = canvasIdFromUrl(location.href);
-        const route = canvas || location.pathname;
+      updateRoute = (url = location.href) => {
+        const { canvasId: canvas, workspace } = companionRoute(url);
+        const route = `${new URL(url).pathname}:${canvas || ""}`;
         if (route !== lastRoute) {
           lastRoute = route;
           closePanel();
+          state.activeField = null;
+          state.activeNode = null;
+          state.activeNodeId = null;
+          state.lastDraft = null;
+          state.reviewSequence++;
           launcher.disabled = !canvas;
           launcher.title = canvas ? "审阅当前聚焦节点" : "进入具体画布后可使用副驾驶";
-          host.style.display = location.pathname.startsWith("/canvas") ? "" : "none";
+          host.style.display = workspace ? "" : "none";
         }
       };
       updateRoute();
@@ -1786,10 +1819,10 @@ export default defineContentScript({
 
       document.addEventListener("focusin", (event) => {
         rememberActive(event.target as Element | null);
-      }, true);
+      }, { capture: true, signal: lifecycle.signal });
       document.addEventListener("pointerdown", (event) => {
         rememberActive(event.target as Element | null);
-      }, true);
+      }, { capture: true, signal: lifecycle.signal });
 
       void browser.storage.sync.get(DEFAULT_SETTINGS).then((settings) => {
         state.settings = normalizeSettings(settings);
@@ -1799,6 +1832,8 @@ export default defineContentScript({
     };
 
     mount();
-    window.setInterval(mount, 1000);
+    ctx.addEventListener(window, "wxt:locationchange", event => updateRoute(event.newUrl.href));
+    ctx.onInvalidated(() => disposeMount());
+    ctx.setInterval(mount, 1000);
   }
 });

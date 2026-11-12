@@ -201,12 +201,12 @@ export function buildReferenceBindings(
 export function snapshotFromPayload(payload: unknown): TapNowCanvasSnapshot | null {
   const root = record(payload);
   const data = record(root.data);
-  const canvas = record(data.canvas);
+  const canvas = data.canvas && typeof data.canvas === "object" ? record(data.canvas) : data;
   const nodes = Array.isArray(canvas.nodes) ? (canvas.nodes as TapNowApiNode[]) : [];
   const connections = Array.isArray(canvas.connections)
     ? (canvas.connections as TapNowApiConnection[])
     : [];
-  if (!nodes.length && !connections.length) return null;
+  if (!Array.isArray(canvas.nodes) || !Array.isArray(canvas.connections)) return null;
   return { nodes, connections, relations: relationsFromPayload(payload) || undefined };
 }
 

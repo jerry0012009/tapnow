@@ -147,3 +147,18 @@ test("preserves TapNow relations order for offscreen reference mapping", () => {
     ]
   );
 });
+
+test("accepts current direct canvas payload and empty graphs without masking errors", () => {
+  const nodes = [imageNode("image-current", "https://files.tapnow.media/output")];
+  const connections = [{ id: "edge", source: "text-input", target: "image-current" }];
+  for (const graph of [{ nodes, connections }, { nodes: [], connections: [] }]) {
+    for (const data of [graph, { canvas: graph }]) {
+      const snapshot = snapshotFromPayload({ code: 0, data });
+      assert.deepEqual(snapshot?.nodes, graph.nodes);
+      assert.deepEqual(snapshot?.connections, graph.connections);
+    }
+  }
+  for (const payload of [{}, { data: {} }, { data: { message: "unauthorized" } }, { data: { nodes: null, connections: [] } }]) {
+    assert.equal(snapshotFromPayload(payload), null);
+  }
+});

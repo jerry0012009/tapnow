@@ -1,5 +1,14 @@
 # TapNow Chrome 扩展
 
+最新本地候选：[Companion 0.1.20](tapnow-companion-0.1.20-chrome.zip)。补修编辑器重绘、
+快速画布切换及重挂载/重新注入清理。构建 bundle 本地回归通过，不代表原生 MV3
+消息传输或真实账号验收通过。见 [本轮验收边界](../docs/COMPANION_LOCAL_INTEGRATION_2026-11-12.md)。
+
+本地候选包：[Companion 0.1.19](tapnow-companion-0.1.19-chrome.zip)。修复新版画布
+路由、缓存画布焦点与实时提示词读取，保留旧版支持。自动化回归已通过，
+但主站安全检查阻止了登录实测，尚不能作为完整兼容验收版本。
+详见 [兼容排查报告](../docs/COMPANION_COMPAT_2026-11-12.md)。
+
 两个独立插件，按需安装：
 
 - [Backup v0.1.16 下载](https://github.com/jerry0012009/tapnow/releases/tag/v0.1.16)：资产备份、本地画布查看、完整性核对。
