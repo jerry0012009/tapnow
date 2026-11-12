@@ -1,11 +1,10 @@
 import { browser } from "wxt/browser";
+import { loadCompanionSettings } from "../../utils/companion-settings";
 import {
-  DEFAULT_SETTINGS,
   normalizeSettings,
   type ReviewSettings
 } from "../../utils/reviewer";
 import {
-  ACU_CONTEXT_WINDOW_TOKENS,
   MAX_LLM_PROMPT_LENGTH,
   MAX_REVIEW_REQUEST_BYTES,
   MAX_REVIEW_TEXT_CHARS
@@ -36,24 +35,22 @@ app.innerHTML = `
   <label for="forbiddenTerms">团队禁用词（逗号或换行分隔）</label>
   <textarea id="forbiddenTerms" placeholder="例如：未授权品牌"></textarea>
     <div class="section">
-      <div class="row"><input id="llmEnabled" type="checkbox"><label for="llmEnabled">启用 LLM 审阅</label></div>
-      <div class="row"><input id="llmIncludeImages" type="checkbox"><label for="llmIncludeImages">检测时发送图片素材</label></div>
     <label for="llmPrompt">LLM 审阅提示词</label>
     <textarea id="llmPrompt" maxlength="${MAX_LLM_PROMPT_LENGTH}" placeholder="用于指导模型审阅当前节点，只输出 JSON 结果。"></textarea>
     <div class="hint">检测时作为 system/instructions 发送，最多 ${MAX_LLM_PROMPT_LENGTH.toLocaleString()} 字符。</div>
-    <div class="hint">ACU gpt-5.6 目录标注 ${ACU_CONTEXT_WINDOW_TOKENS.toLocaleString()} tokens；节点文字总预算 ${MAX_REVIEW_TEXT_CHARS.toLocaleString()} 字符，请求体预算 ${(MAX_REVIEW_REQUEST_BYTES / 1_000_000).toFixed(0)} MB。</div>
+    <div class="hint">节点文字总预算 ${MAX_REVIEW_TEXT_CHARS.toLocaleString()} 字符，请求体预算 ${(MAX_REVIEW_REQUEST_BYTES / 1_000_000).toFixed(0)} MB。</div>
     <label for="llmProtocol">接口协议</label>
     <select id="llmProtocol">
       <option value="responses">Responses</option>
       <option value="chat_completions">Chat Completions</option>
     </select>
     <label for="llmModel">模型</label>
-    <input id="llmModel" type="text" placeholder="gpt-5.6-luna">
+    <input id="llmModel" type="text" placeholder="gpt-6.1-sol">
     <label for="llmBaseUrl">API Base URL</label>
     <input id="llmBaseUrl" type="text" placeholder="https://api.acucompute.com/v1">
     <label for="apiKey">API Key</label>
     <input id="apiKey" type="password" placeholder="留空表示不修改已保存的 Key">
-    <div class="hint">0.1 支持 OpenAI/ACU HTTPS API；Key 不会同步到 Chrome 账号。</div>
+    <div class="hint">点击检测会向配置的 API 发送当前节点文字与图片，可能产生费用。Key 不会同步到 Chrome 账号。</div>
   </div>
   <button id="save" type="button">保存设置</button>
   <div id="status" role="status"></div>
@@ -61,30 +58,24 @@ app.innerHTML = `
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-const [syncSettings, localSettings] = await Promise.all([
-  browser.storage.sync.get(DEFAULT_SETTINGS),
-  browser.storage.local.get({ apiKey: "" })
-]);
-const settings = normalizeSettings(syncSettings);
+const { settings, apiKey: configuredKey } = await loadCompanionSettings(browser.storage);
 
 ($("enabled") as HTMLInputElement).checked = settings.enabled;
-($("llmEnabled") as HTMLInputElement).checked = settings.llmEnabled;
-($("llmIncludeImages") as HTMLInputElement).checked = settings.llmIncludeImages;
 ($("llmPrompt") as HTMLTextAreaElement).value = settings.llmPrompt;
 ($("llmProtocol") as HTMLSelectElement).value = settings.llmProtocol;
 ($("llmModel") as HTMLInputElement).value = settings.llmModel;
 ($("llmBaseUrl") as HTMLInputElement).value = settings.llmBaseUrl;
 ($("requiredTerms") as HTMLTextAreaElement).value = settings.requiredTerms.join(", ");
 ($("forbiddenTerms") as HTMLTextAreaElement).value = settings.forbiddenTerms.join(", ");
-($("apiKey") as HTMLInputElement).placeholder = localSettings.apiKey
+($("apiKey") as HTMLInputElement).placeholder = configuredKey
   ? "已配置，留空表示不修改"
   : "sk-...";
 
 $("save").addEventListener("click", async () => {
   const next: ReviewSettings = normalizeSettings({
     enabled: ($("enabled") as HTMLInputElement).checked,
-    llmEnabled: ($("llmEnabled") as HTMLInputElement).checked,
-    llmIncludeImages: ($("llmIncludeImages") as HTMLInputElement).checked,
+    llmEnabled: true,
+    llmIncludeImages: true,
     llmPrompt: ($("llmPrompt") as HTMLTextAreaElement).value,
     llmProtocol: ($("llmProtocol") as HTMLSelectElement).value as ReviewSettings["llmProtocol"],
     llmModel: ($("llmModel") as HTMLInputElement).value,

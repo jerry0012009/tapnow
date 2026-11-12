@@ -1,5 +1,11 @@
 # TapNow Chrome 扩展
 
+最新试用版：[Companion 0.1.21 下载](https://github.com/jerry0012009/tapnow/releases/download/v0.1.21/tapnow-companion-0.1.21-chrome.zip)。
+默认模型 `gpt-6.1-sol`，LLM 和图片素材发送默认启用，不需要勾选；内置发布者授权
+分发的限额试用 Key。点击“检测”才会发送节点文字和图片，可能产生费用。
+已有用户 Key 和自定义模型保留，旧默认模型自动迁移。试用 Key 随安装包可被提取，
+不承诺永久可用。真实账号、真实模型和真站新旧画布仍待本地 PC 验收。
+
 最新本地候选：[Companion 0.1.20](tapnow-companion-0.1.20-chrome.zip)。补修编辑器重绘、
 快速画布切换及重挂载/重新注入清理。构建 bundle 和 CfT 原生 MV3 本地回归均通过，
 真实账号/真站验收仍未完成。见 [本轮验收边界](../docs/COMPANION_LOCAL_INTEGRATION_2026-11-12.md)。

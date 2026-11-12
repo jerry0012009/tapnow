@@ -28,8 +28,11 @@ for (const edition of editions) {
         throw new Error(`Stale release entry: ${file}`);
       }
     }
-    mkdirSync("releases", { recursive: true });
-    const target = `releases/tapnow-${edition}-${pkg.version}-chrome.zip`;
+    const releaseDir = process.env.TAPNOW_TRIAL_KEY_FILE
+      ? "artifacts/private/trial-releases"
+      : "releases";
+    mkdirSync(releaseDir, { recursive: true });
+    const target = `${releaseDir}/tapnow-${edition}-${pkg.version}-chrome.zip`;
     copyFileSync(archive, target);
     console.log(`Release ZIP checked against ${files.length} build files: ${target}`);
   }

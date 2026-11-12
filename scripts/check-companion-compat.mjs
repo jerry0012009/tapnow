@@ -112,7 +112,7 @@ try {
     contentBundle = content;
     await context.addInitScript(() => {
       const settings = { llmEnabled: true, llmIncludeImages: false };
-      const local = { apiKey: "fixture-not-a-real-key" };
+      const local = { apiKey: "fixture-not-a-real-key", companionTrialDefaultsVersion: 1 };
       globalThis.fixtureRequests = [];
       const listeners = [];
       globalThis.chrome = {

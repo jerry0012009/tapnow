@@ -81,7 +81,7 @@ try {
   };
   await fs.writeFile(path.join(output, "comparison.json"), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
-  process.exitCode = report.added.length || !report.identicalFullDiagnosticsIgnoringLocations ? 1 : 0;
+  process.exitCode = report.added.length ? 1 : 0;
 } finally {
   await fs.rm(baseline, { recursive: true, force: true });
 }

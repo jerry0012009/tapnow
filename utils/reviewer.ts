@@ -194,11 +194,11 @@ export const DEFAULT_SETTINGS: ReviewSettings = {
   enabled: true,
   requiredTerms: [],
   forbiddenTerms: [],
-  llmEnabled: false,
-  llmIncludeImages: false,
+  llmEnabled: true,
+  llmIncludeImages: true,
   llmPrompt: DEFAULT_LLM_PROMPT,
   llmProtocol: "responses",
-  llmModel: "gpt-5.6-luna",
+  llmModel: "gpt-6.1-sol",
   llmBaseUrl: "https://api.acucompute.com/v1"
 };
 
@@ -219,8 +219,8 @@ export function normalizeSettings(
     enabled: settings.enabled !== false,
     requiredTerms: splitTerms(settings.requiredTerms),
     forbiddenTerms: splitTerms(settings.forbiddenTerms),
-    llmEnabled: settings.llmEnabled === true,
-    llmIncludeImages: settings.llmIncludeImages === true,
+    llmEnabled: settings.llmEnabled !== false,
+    llmIncludeImages: settings.llmIncludeImages !== false,
     llmPrompt: String(settings.llmPrompt || DEFAULT_LLM_PROMPT)
       .trim()
       .slice(0, MAX_LLM_PROMPT_LENGTH),

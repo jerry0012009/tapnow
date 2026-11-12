@@ -3,3 +3,4 @@
 4f1c1e209a5dc9e93087acace5c49dd3ef2a2217f2829f9c331e8ced65fa2150  tapnow-backup-0.1.16-chrome.zip
 30d8493d9c131dec03e31ab21591388330b38cc7acdc247f608f1b88b6c2bad3  tapnow-companion-0.1.19-chrome.zip
 cf4895e5d6fb112b2806387f2e1699b1ef355b05b535efaefb8b69e7d375b758  tapnow-companion-0.1.20-chrome.zip
+dbb84fa0860bf46feb739b9fe14cd7d53d0728e5ef78273777041e2529995f14  tapnow-companion-0.1.21-chrome.zip

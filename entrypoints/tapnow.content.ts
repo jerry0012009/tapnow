@@ -1,6 +1,7 @@
 import { browser } from "wxt/browser";
 import { createElement, GripVertical, RotateCcw } from "lucide";
 import { companionRoute } from "../utils/tapnow-route";
+import { loadCompanionSettings } from "../utils/companion-settings";
 import {
   canvasRoot,
   canvasNodeFor,
@@ -11,7 +12,6 @@ import {
 } from "../utils/tapnow-dom";
 import {
   DEFAULT_SETTINGS,
-  normalizeSettings,
   reviewDraft,
   inferPromptFromNodeText,
   inferNodeTypeFromId,
@@ -1824,8 +1824,8 @@ export default defineContentScript({
         rememberActive(event.target as Element | null);
       }, { capture: true, signal: lifecycle.signal });
 
-      void browser.storage.sync.get(DEFAULT_SETTINGS).then((settings) => {
-        state.settings = normalizeSettings(settings);
+      void loadCompanionSettings(browser.storage).then(({ settings }) => {
+        state.settings = settings;
         launcher.hidden = !state.settings.enabled;
       });
       loadLauncherPosition();

@@ -1,6 +1,6 @@
 import { browser, type Browser } from "wxt/browser";
 import { defineBackground } from "wxt/utils/define-background";
-import { DEFAULT_SETTINGS, normalizeSettings } from "../utils/reviewer";
+import { loadCompanionSettings } from "../utils/companion-settings";
 import { LlmRequestError, reviewWithLlm } from "../utils/llm";
 import { MAX_SINGLE_IMAGE_BYTES } from "../utils/limits";
 import { messageListener } from "../utils/messages";
@@ -147,18 +147,14 @@ export default defineBackground(() => {
 
     if (message?.type !== "tapnow:llm-review") return undefined;
 
-    const [syncSettings, localSettings] = await Promise.all([
-      browser.storage.sync.get(DEFAULT_SETTINGS),
-      browser.storage.local.get({ apiKey: "" })
-    ]);
-    const settings = normalizeSettings(syncSettings);
+    const { settings, apiKey } = await loadCompanionSettings(browser.storage);
     if (!settings.llmEnabled) {
       return { ok: false, error: "LLM 审阅未启用。" };
     }
 
     try {
       const result = await reviewWithLlm(message.draft, {
-        apiKey: String(localSettings.apiKey || ""),
+        apiKey,
         includeImages: settings.llmIncludeImages,
         prompt: settings.llmPrompt,
         protocol: settings.llmProtocol,
